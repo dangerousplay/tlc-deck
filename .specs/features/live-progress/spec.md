@@ -102,7 +102,7 @@ costs, and no way to run the same plan from Codex CLI, Gemini CLI or OpenCode.
 **Acceptance Criteria**:
 
 1. `tlc run --feature f [--harness codex|gemini|opencode|claude] [--only T1,T2] [--retries n] [--no-commit]` SHALL parse tasks.md, compute waves, and run implement → verify → (advise) → commit per task, `[P]` tasks concurrently (max configurable, default 3).
-2. Each role SHALL run as a headless harness call (`codex exec`, `gemini -p`, `opencode run`, `claude -p`) with the role's model and a prompt built from the task definition and referenced spec/design paths, and return structured status (Complete | Blocked | Partial, files, gate, deviations).
+2. Each role SHALL run as a headless harness call (`codex exec`, `agy -p`, `gemini -p`, `opencode run`, `claude -p`; `agy` added per design DD-09) with the role's model and a prompt built from the task definition and referenced spec/design paths, and return structured status (Complete | Blocked | Partial, files, gate, deviations).
 3. Roles MAY use different harnesses (e.g. implementer codex, reviewer claude).
 4. WHEN a harness CLI is missing or fails THEN the task SHALL get a blocker of kind `error` and the run SHALL continue with independent tasks.
 5. The runner SHALL emit the same protocol events, with tokens/cost when the harness reports them.
