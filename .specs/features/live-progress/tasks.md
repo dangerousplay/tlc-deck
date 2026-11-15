@@ -52,6 +52,7 @@ Finish:      all → T17
 
 ### T1: Monorepo scaffold
 
+**Status**: Done
 **Milestone**: Foundation
 **What**: pnpm workspace with `packages/{protocol,core,server,cli,runner}`, `apps/web` (empty Vite React TS app placeholder), shared `tsconfig.base.json`, Biome config, Vitest workspace, root scripts `test`, `typecheck`, `check`, `build`. `README.md` skeleton, `LICENSE` (MIT), `.gitignore`, `.nvmrc` (22). Each package builds with `tsc -b` to `dist/`.
 **Where**: repo root, `packages/*/package.json`, `packages/*/src/index.ts`
@@ -59,8 +60,8 @@ Finish:      all → T17
 **Requirement**: (infra)
 
 **Done when**:
-- [ ] `pnpm install && pnpm check` passes with one trivial test per package
-- [ ] `node packages/cli/dist/index.js --version` prints the version
+- [x] `pnpm install && pnpm check` passes with one trivial test per package
+- [x] `node packages/cli/dist/index.js --version` prints the version
 
 **Tests**: unit · **Gate**: full
 

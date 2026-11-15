@@ -1,0 +1,21 @@
+{
+  "name": "tlc-deck",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@12.20.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r build",
+    "check": "biome check . && pnpm -r typecheck && pnpm -r test && pnpm --filter @tlc-deck/web build"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}
