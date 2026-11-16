@@ -214,6 +214,10 @@ importers:
         version: 22.20.5
 
   packages/core:
+    dependencies:
+      '@tlc-deck/protocol':
+        specifier: workspace:*
+        version: link:../protocol
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

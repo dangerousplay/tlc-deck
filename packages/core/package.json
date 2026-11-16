@@ -4,7 +4,6 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-
   "files": [
     "dist"
   ],
@@ -15,5 +14,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0"
+  },
+  "dependencies": {
+    "@tlc-deck/protocol": "workspace:*"
   }
 }
