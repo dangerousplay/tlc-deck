@@ -1,6 +1,8 @@
 import type { TaskDetails } from "@tlc-deck/core";
 import type { AgentInfo, TaskState } from "@tlc-deck/protocol";
 import { CheckSquare, Square } from "lucide-react";
+import { useState } from "react";
+import { AgentChatLive, AgentRow } from "@/components/agent-chat";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { MiniMarkdown } from "./mini-markdown";
@@ -91,11 +93,23 @@ export function StageTimeline({
   );
 }
 
-export function StageAgents({ stages, agents }: { stages: StageEntry[]; agents: AgentInfo[] }) {
+export function StageAgents({
+  stages,
+  agents,
+  fetchFn,
+  EventSourceCtor,
+}: {
+  stages: StageEntry[];
+  agents: AgentInfo[];
+  fetchFn?: typeof fetch | undefined;
+  EventSourceCtor?: typeof EventSource | undefined;
+}) {
+  const [selected, setSelected] = useState<string>();
   if (agents.length === 0) {
     return <p className="text-sm text-muted-foreground">No agents recorded for this task.</p>;
   }
   const names = [...new Set([...stages.map((s) => s.stage), ...agents.map((a) => a.stage ?? "")])];
+  const current = agents.find((a) => a.id === selected);
   return (
     <div className="space-y-3" data-testid="stage-agents">
       {names.map((stage) => {
@@ -106,30 +120,25 @@ export function StageAgents({ stages, agents }: { stages: StageEntry[]; agents: 
             <div className="text-xs font-medium">{stage || "unassigned"}</div>
             <ul className="space-y-1">
               {list.map((a) => (
-                <li
+                <AgentRow
                   key={a.id}
-                  data-testid="agent-row"
-                  className="flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs"
-                >
-                  <span
-                    className={cn(
-                      "size-2 rounded-full",
-                      a.status === "running"
-                        ? "bg-blue-500"
-                        : a.status === "error"
-                          ? "bg-red-500"
-                          : "bg-emerald-500",
-                    )}
-                  />
-                  <span className="truncate font-medium">{a.label ?? a.role ?? a.id}</span>
-                  {a.model && <span className="text-muted-foreground">{a.model}</span>}
-                  <span className="ml-auto text-muted-foreground">{a.status}</span>
-                </li>
+                  agent={a}
+                  selected={a.id === selected}
+                  onSelect={setSelected}
+                />
               ))}
             </ul>
           </div>
         );
       })}
+      {current && (
+        <AgentChatLive
+          key={current.id}
+          agent={current}
+          fetchFn={fetchFn}
+          EventSourceCtor={EventSourceCtor}
+        />
+      )}
     </div>
   );
 }
@@ -139,11 +148,15 @@ export function TaskView({
   taskId,
   data,
   agents = [],
+  fetchFn,
+  EventSourceCtor,
 }: {
   runId: string;
   taskId: string;
   data: TaskData;
   agents?: AgentInfo[];
+  fetchFn?: typeof fetch | undefined;
+  EventSourceCtor?: typeof EventSource | undefined;
 }) {
   const { details, notice, state } = data;
   const task = state.task;
@@ -248,7 +261,12 @@ export function TaskView({
         <StageTimeline stages={state.stages} current={task?.status} />
       </Block>
       <Block title="Agents">
-        <StageAgents stages={state.stages} agents={agents} />
+        <StageAgents
+          stages={state.stages}
+          agents={agents}
+          fetchFn={fetchFn}
+          EventSourceCtor={EventSourceCtor}
+        />
       </Block>
     </div>
   );

@@ -115,7 +115,7 @@ T4, T7, T8 → T9
 
 **Done when**:
 - [ ] Component tests: pairing, collapse, truncation, auto-scroll pause; store test for backlog + live merge
-- [ ] Screenshot check (playwright-core, headless shell under `~/.cache/ms-playwright/`) of task view and session agents in light/dark
+- [x] Screenshot check (playwright-core, headless shell under `~/.cache/ms-playwright/`) of task view and session agents in light/dark
 - [ ] Gate passes
 
 ---

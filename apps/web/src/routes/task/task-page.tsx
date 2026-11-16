@@ -49,7 +49,7 @@ export function TaskContent({
   const { data, agents, missing } = useTaskData(runId, taskId, fetchFn);
   if (missing) return <p className="text-sm text-muted-foreground">Run not found.</p>;
   if (!data) return <Skeleton className="h-40 w-full rounded-xl" />;
-  return <TaskView runId={runId} taskId={taskId} data={data} agents={agents} />;
+  return <TaskView runId={runId} taskId={taskId} data={data} agents={agents} fetchFn={fetchFn} />;
 }
 
 /** Full-page task view at /runs/:run/tasks/:task. */

@@ -1,3 +1,4 @@
+import type { AgentInfo } from "@tlc-deck/protocol";
 import { useEffect, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type SessionEventInfo, type SessionInfo, useDeck } from "@/lib/store";
@@ -9,6 +10,7 @@ export function SessionPage({ id, fetchFn }: { id: string; fetchFn?: typeof fetc
   const [data, setData] = useState<{ session: SessionInfo; events: SessionEventInfo[] } | null>(
     null,
   );
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [missing, setMissing] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `live` is the refetch trigger
   useEffect(() => {
@@ -24,6 +26,13 @@ export function SessionPage({ id, fetchFn }: { id: string; fetchFn?: typeof fetc
         setData({ session, events });
       })
       .catch(() => {});
+    (fetchFn ?? fetch)(`/api/agents?session=${encodeURIComponent(id)}`)
+      .then(async (res) => {
+        if (cancelled || !res.ok) return;
+        const list = (await res.json()) as AgentInfo[];
+        if (Array.isArray(list)) setAgents(list);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -31,5 +40,12 @@ export function SessionPage({ id, fetchFn }: { id: string; fetchFn?: typeof fetc
   if (missing) return <p className="text-sm text-muted-foreground">Session not found.</p>;
   const session = live ?? data?.session;
   if (!session) return <Skeleton className="h-40 w-full rounded-xl" />;
-  return <SessionDetail session={session} events={data?.events ?? []} />;
+  return (
+    <SessionDetail
+      session={session}
+      events={data?.events ?? []}
+      agents={agents}
+      fetchFn={fetchFn}
+    />
+  );
 }

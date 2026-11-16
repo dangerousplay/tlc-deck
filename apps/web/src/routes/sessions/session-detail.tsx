@@ -1,3 +1,4 @@
+import type { AgentInfo } from "@tlc-deck/protocol";
 import {
   Bell,
   Bot,
@@ -7,6 +8,7 @@ import {
   MessageSquare,
   Wrench,
 } from "lucide-react";
+import { SessionAgents } from "@/components/agent-chat";
 import { EmptyState, SessionStateBadge } from "@/components/status";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { clock, formatCost, formatTokens } from "@/lib/format";
@@ -53,9 +55,15 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 export function SessionDetail({
   session: s,
   events,
+  agents = [],
+  fetchFn,
+  EventSourceCtor,
 }: {
   session: SessionInfo;
   events: SessionEventInfo[];
+  agents?: AgentInfo[];
+  fetchFn?: typeof fetch | undefined;
+  EventSourceCtor?: typeof EventSource | undefined;
 }) {
   const tokens = sessionTokens(s);
   return (
@@ -97,6 +105,14 @@ export function SessionDetail({
           ) : (
             <p className="text-sm text-muted-foreground">No usage data.</p>
           )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Agents</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <SessionAgents agents={agents} fetchFn={fetchFn} EventSourceCtor={EventSourceCtor} />
         </CardContent>
       </Card>
       <Card>
