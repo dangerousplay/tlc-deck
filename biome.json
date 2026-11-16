@@ -6,6 +6,7 @@
       "!**/dist",
       "!**/node_modules",
       "!.specs",
+      "!integrations/claude-code/workflow/tlc-execute.js",
       "!**/*.tsbuildinfo",
       "!fixtures/**/expected.json"
     ]
