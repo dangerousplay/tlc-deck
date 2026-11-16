@@ -1,3 +1,5 @@
+import type { Usage } from "../otel/usage.js";
+
 export const PROMPT_MAX = 200;
 export const IDLE_MS = 10 * 60 * 1000;
 
@@ -21,6 +23,8 @@ export interface Session {
   lastSeen: number;
   /** Run id of a running tlc run in the same repo. */
   linkedRun?: string;
+  /** Tokens and cost from OTel (replaces hook-side estimates). */
+  usage?: Usage;
 }
 
 export interface SessionEvent {

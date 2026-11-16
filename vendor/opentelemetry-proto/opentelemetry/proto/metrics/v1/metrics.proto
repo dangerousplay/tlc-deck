@@ -1,0 +1,40 @@
+syntax = "proto3";
+package opentelemetry.proto.metrics.v1;
+import "opentelemetry/proto/common/v1/common.proto";
+import "opentelemetry/proto/resource/v1/resource.proto";
+
+message ResourceMetrics {
+  opentelemetry.proto.resource.v1.Resource resource = 1;
+  repeated ScopeMetrics scope_metrics = 2;
+  string schema_url = 3;
+}
+message ScopeMetrics {
+  opentelemetry.proto.common.v1.InstrumentationScope scope = 1;
+  repeated Metric metrics = 2;
+  string schema_url = 3;
+}
+message Metric {
+  string name = 1;
+  string description = 2;
+  string unit = 3;
+  oneof data {
+    Gauge gauge = 5;
+    Sum sum = 7;
+  }
+}
+message Gauge { repeated NumberDataPoint data_points = 1; }
+message Sum {
+  repeated NumberDataPoint data_points = 1;
+  int32 aggregation_temporality = 2;
+  bool is_monotonic = 3;
+}
+message NumberDataPoint {
+  repeated opentelemetry.proto.common.v1.KeyValue attributes = 7;
+  fixed64 start_time_unix_nano = 2;
+  fixed64 time_unix_nano = 3;
+  oneof value {
+    double as_double = 4;
+    sfixed64 as_int = 6;
+  }
+  uint32 flags = 8;
+}

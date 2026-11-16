@@ -1,0 +1,7 @@
+syntax = "proto3";
+package opentelemetry.proto.collector.metrics.v1;
+import "opentelemetry/proto/metrics/v1/metrics.proto";
+
+message ExportMetricsServiceRequest {
+  repeated opentelemetry.proto.metrics.v1.ResourceMetrics resource_metrics = 1;
+}

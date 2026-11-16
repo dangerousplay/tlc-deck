@@ -29,6 +29,7 @@ export interface InstallOptions {
   hooks?: boolean;
   workflow?: boolean;
   panel?: boolean;
+  otel?: boolean;
   dryRun?: boolean;
   env: Record<string, string | undefined>;
   stdout: (text: string) => void;
@@ -103,6 +104,88 @@ interface Sidecar {
   original: string | null;
   /** Bytes the installer wrote. */
   written: string;
+}
+
+export function otelEnv(env: InstallOptions["env"]): Record<string, string> {
+  return {
+    CLAUDE_CODE_ENABLE_TELEMETRY: "1",
+    OTEL_METRICS_EXPORTER: "otlp",
+    OTEL_LOGS_EXPORTER: "otlp",
+    OTEL_EXPORTER_OTLP_PROTOCOL: "http/json",
+    OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${env.TLC_PORT || "7317"}`,
+  };
+}
+
+const otelSidecarPath = (env: InstallOptions["env"]) =>
+  join(claudeDir(env), "settings.json.tlc-deck-otel");
+
+interface OtelSidecar {
+  /** Previous value per key, null when the key was absent. */
+  previous: Record<string, string | null>;
+}
+
+function readSettings(path: string): { settings: Json; current: string | undefined } {
+  const current = readText(path);
+  if (current === undefined || !current.trim()) return { settings: {}, current };
+  try {
+    return { settings: JSON.parse(current) as Json, current };
+  } catch (err) {
+    throw new Error(`${path} is not valid JSON: ${(err as Error).message}`);
+  }
+}
+
+function installOtel(o: InstallOptions): void {
+  const path = settingsPath(o.env);
+  const { settings, current } = readSettings(path);
+  const env = (settings.env && typeof settings.env === "object" ? settings.env : {}) as Json;
+  const want = otelEnv(o.env);
+  const side = readText(otelSidecarPath(o.env));
+  const previous: Record<string, string | null> = side
+    ? (JSON.parse(side) as OtelSidecar).previous
+    : {};
+  let changed = false;
+  for (const [k, v] of Object.entries(want)) {
+    if (env[k] === v) continue;
+    if (!(k in previous)) previous[k] = typeof env[k] === "string" ? (env[k] as string) : null;
+    env[k] = v;
+    changed = true;
+  }
+  if (!changed) {
+    o.stdout(`otel: already installed in ${path}\n`);
+    return;
+  }
+  settings.env = env;
+  const fmt = current ? detectFormat(current) : { indent: 2, eol: "\n" };
+  o.stdout(`otel: ${o.dryRun ? "would write" : "writing"} OTel env block to ${path}\n`);
+  if (o.dryRun) return;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(settings, null, fmt.indent)}${fmt.eol}`);
+  writeFileSync(otelSidecarPath(o.env), JSON.stringify({ previous } satisfies OtelSidecar));
+}
+
+function uninstallOtel(o: InstallOptions): void {
+  const path = settingsPath(o.env);
+  const side = readText(otelSidecarPath(o.env));
+  if (!existsSync(path) || !side) {
+    o.stdout("otel: nothing to remove\n");
+    return;
+  }
+  const { previous } = JSON.parse(side) as OtelSidecar;
+  const { settings, current } = readSettings(path);
+  const env = (settings.env && typeof settings.env === "object" ? settings.env : {}) as Json;
+  for (const k of Object.keys(previous)) {
+    if (!(k in env)) continue;
+    const prev = previous[k];
+    if (prev === null || prev === undefined) delete env[k];
+    else env[k] = prev;
+  }
+  if (Object.keys(env).length) settings.env = env;
+  else delete settings.env;
+  o.stdout(`otel: ${o.dryRun ? "would remove" : "removing"} OTel env block from ${path}\n`);
+  if (o.dryRun) return;
+  const fmt = detectFormat(current ?? "");
+  writeFileSync(path, `${JSON.stringify(settings, null, fmt.indent)}${fmt.eol}`);
+  rmSync(otelSidecarPath(o.env), { force: true });
 }
 
 function installHooks(o: InstallOptions): void {
@@ -264,8 +347,13 @@ function installPanel(o: InstallOptions, remove: boolean): void {
 
 /** With no component flag, `--hooks` and `--workflow` are installed. */
 function selected(o: InstallOptions) {
-  const any = o.hooks || o.workflow || o.panel;
-  return { hooks: any ? !!o.hooks : true, workflow: any ? !!o.workflow : true, panel: !!o.panel };
+  const any = o.hooks || o.workflow || o.panel || o.otel;
+  return {
+    hooks: any ? !!o.hooks : true,
+    workflow: any ? !!o.workflow : true,
+    panel: !!o.panel,
+    otel: !!o.otel,
+  };
 }
 
 export function installClaudeCode(o: InstallOptions): void {
@@ -273,6 +361,7 @@ export function installClaudeCode(o: InstallOptions): void {
   if (s.hooks) installHooks(o);
   if (s.workflow) installWorkflow(o);
   if (s.panel) installPanel(o, false);
+  if (s.otel) installOtel(o);
 }
 
 export function uninstallClaudeCode(o: InstallOptions): void {
@@ -280,4 +369,5 @@ export function uninstallClaudeCode(o: InstallOptions): void {
   if (s.hooks) uninstallHooks(o);
   if (s.workflow) uninstallWorkflow(o);
   if (s.panel) installPanel(o, true);
+  if (s.otel) uninstallOtel(o);
 }

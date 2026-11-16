@@ -113,3 +113,25 @@ test("panel prints commands when claude is not on PATH", async () => {
 test("rejects unknown target", async () => {
   expect(await tlc("install", "nope")).toBe(2);
 });
+
+test("install --otel writes env block, idempotent, uninstall restores", async () => {
+  mkdirSync(join(home, ".claude"), { recursive: true });
+  const original = `{\n  "env": { "OTEL_METRICS_EXPORTER": "console", "KEEP": "1" }\n}\n`;
+  writeFileSync(settings(), original);
+  expect(await tlc("install", "claude-code", "--otel")).toBe(0);
+  const env = JSON.parse(readFileSync(settings(), "utf8")).env;
+  expect(env).toMatchObject({
+    CLAUDE_CODE_ENABLE_TELEMETRY: "1",
+    OTEL_METRICS_EXPORTER: "otlp",
+    OTEL_LOGS_EXPORTER: "otlp",
+    OTEL_EXPORTER_OTLP_PROTOCOL: "http/json",
+    OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:7317",
+    KEEP: "1",
+  });
+  expect(existsSync(wf())).toBe(false);
+  out = "";
+  await tlc("install", "claude-code", "--otel");
+  expect(out).toContain("already installed");
+  expect(await tlc("uninstall", "claude-code", "--otel")).toBe(0);
+  expect(JSON.parse(readFileSync(settings(), "utf8"))).toEqual(JSON.parse(original));
+});

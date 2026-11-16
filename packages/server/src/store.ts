@@ -2,9 +2,19 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { RunState, TlcEvent } from "@tlc-deck/protocol";
+import type { Usage, UsageSource } from "./otel/usage.js";
 import type { Session, SessionEvent } from "./sessions/model.js";
 
 export const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+export interface UsageRow extends Usage {
+  ts: number;
+  source: UsageSource;
+  sessionId: string;
+  runId?: string;
+  workflowRunId?: string;
+  model?: string;
+}
 
 export interface Store {
   /** Insert an event; false when (runId, seq) already exists. */
@@ -20,6 +30,11 @@ export interface Store {
   listSessions(): Session[];
   addSessionEvent(sessionId: string, event: SessionEvent): void;
   sessionEvents(sessionId: string): SessionEvent[];
+  addUsage(row: UsageRow): void;
+  /** Usage by session or tlc run; OTel api_request events win over metrics when both exist. */
+  sumUsage(by: { sessionId: string } | { runId: string }): Usage | undefined;
+  /** Whether this workflow run id was seen before, and the tlc run it was linked to. */
+  workflowLink(workflowRunId: string): { seen: boolean; runId?: string };
   /** Delete runs, events and sessions last seen before `before`. Returns deleted run count. */
   purge(before: number): number;
   close(): void;
@@ -47,6 +62,10 @@ const MIGRATIONS: string[] = [
      role TEXT, model TEXT, input INTEGER, output INTEGER, cache_read INTEGER, cache_write INTEGER,
      cost_usd REAL
    );`,
+  `ALTER TABLE usage ADD COLUMN workflow_run_id TEXT;
+   CREATE INDEX usage_session ON usage(session_id);
+   CREATE INDEX usage_run ON usage(run_id);
+   CREATE INDEX usage_workflow ON usage(workflow_run_id);`,
 ];
 
 export class SqliteStore implements Store {
@@ -163,6 +182,54 @@ export class SqliteStore implements Store {
     return rows.map((r) => JSON.parse(r.event) as SessionEvent);
   }
 
+  addUsage(u: UsageRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO usage (run_id, session_id, ts, role, model, input, output, cache_read, cache_write, cost_usd, workflow_run_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        u.runId ?? null,
+        u.sessionId,
+        u.ts,
+        u.source,
+        u.model ?? null,
+        u.input,
+        u.output,
+        u.cacheRead,
+        u.cacheWrite,
+        u.costUsd,
+        u.workflowRunId ?? null,
+      );
+  }
+
+  sumUsage(by: { sessionId: string } | { runId: string }): Usage | undefined {
+    const [col, val] = "sessionId" in by ? ["session_id", by.sessionId] : ["run_id", by.runId];
+    const rows = this.db
+      .prepare(
+        `SELECT role, SUM(input) AS input, SUM(output) AS output, SUM(cache_read) AS cacheRead,
+           SUM(cache_write) AS cacheWrite, SUM(cost_usd) AS costUsd
+         FROM usage WHERE ${col} = ? AND role IN ('metric', 'log') GROUP BY role`,
+      )
+      .all(val) as unknown as (Usage & { role: UsageSource })[];
+    const row = rows.find((r) => r.role === "log") ?? rows.find((r) => r.role === "metric");
+    if (!row) return undefined;
+    return {
+      input: row.input,
+      output: row.output,
+      cacheRead: row.cacheRead,
+      cacheWrite: row.cacheWrite,
+      costUsd: row.costUsd,
+    };
+  }
+
+  workflowLink(workflowRunId: string): { seen: boolean; runId?: string } {
+    const rows = this.db
+      .prepare("SELECT run_id FROM usage WHERE workflow_run_id = ?")
+      .all(workflowRunId) as { run_id: string | null }[];
+    return { seen: rows.length > 0, runId: rows.find((r) => r.run_id)?.run_id ?? undefined };
+  }
+
   purge(before: number): number {
     const old = this.db
       .prepare("SELECT run_id FROM runs WHERE COALESCE(last_event_at, started_at, 0) < ?")
@@ -178,7 +245,7 @@ export class SqliteStore implements Store {
       )
       .run(before);
     this.db.prepare("DELETE FROM sessions WHERE last_seen < ?").run(before);
-    this.db.prepare("DELETE FROM usage WHERE run_id IS NULL AND ts < ?").run(before);
+    this.db.prepare("DELETE FROM usage WHERE ts < ?").run(before);
     return old.length;
   }
 

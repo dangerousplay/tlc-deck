@@ -14,10 +14,14 @@ import {
 import { parseLine, type RunState, type TlcEvent } from "@tlc-deck/protocol";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { decodeOtlp, type OtlpKind } from "./otel/decode.js";
+import { countSpans, extractUsage } from "./otel/usage.js";
 import { applyHook, type HookBody, type Session, withIdle } from "./sessions/model.js";
 import { RETENTION_MS, SqliteStore, type Store } from "./store.js";
 
 export const DEFAULT_PORT = 7317;
+/** DD-12: workflow run id first seen this soon after RunStarted links to the run. */
+const WORKFLOW_LINK_MS = 120_000;
 
 export interface ServerOptions {
   /** 0 picks a free port. Default 7317. */
@@ -123,7 +127,28 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       .listRuns()
       .map(withStale)
       .find((r) => r.status === "running" && r.threadId?.split("#")[0] === v.project);
-    return run ? { ...v, linkedRun: run.runId } : v;
+    const withRun = run ? { ...v, linkedRun: run.runId } : v;
+    const usage = store.sumUsage({ sessionId: v.sessionId });
+    return usage ? { ...withRun, usage } : withRun;
+  };
+  const spanCounts = { total: 0, bySession: {} as Record<string, number> };
+  const linkWorkflow = (sessionId: string, workflowRunId: string, name: string | undefined) => {
+    const known = store.workflowLink(workflowRunId);
+    if (known.seen) return known.runId;
+    if (!name?.includes("tlc-execute")) return undefined;
+    const project = store.getSession(sessionId)?.project;
+    if (!project) return undefined;
+    const t = now();
+    return store
+      .listRuns()
+      .find(
+        (r) =>
+          r.status === "running" &&
+          r.threadId?.split("#")[0] === project &&
+          r.startedAt !== undefined &&
+          t - r.startedAt >= 0 &&
+          t - r.startedAt <= WORKFLOW_LINK_MS,
+      )?.runId;
   };
   const broadcast = (s: Session) => {
     const e = { type: "CUSTOM", timestamp: now(), name: "tlc.session", value: s };
@@ -185,6 +210,59 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     return c.body(null, 200);
   });
 
+  for (const [path, kind] of [
+    ["/v1/metrics", "metrics"],
+    ["/v1/logs", "logs"],
+    ["/v1/traces", "traces"],
+  ] as [string, OtlpKind][]) {
+    app.post(path, async (c) => {
+      const protobuf = (c.req.header("content-type") ?? "").toLowerCase().includes("protobuf");
+      const ok = () =>
+        protobuf
+          ? c.body(null, 200, { "content-type": "application/x-protobuf" })
+          : c.json({}, 200);
+      let data: unknown;
+      try {
+        const body = Buffer.from(await c.req.arrayBuffer());
+        data = decodeOtlp(
+          kind,
+          body,
+          c.req.header("content-type"),
+          c.req.header("content-encoding"),
+        );
+      } catch {
+        return c.json({ error: "invalid OTLP payload" }, 400);
+      }
+      try {
+        if (kind === "traces") {
+          const n = countSpans(data);
+          spanCounts.total += n.total;
+          for (const [sid, count] of n.bySession) {
+            if (sid) spanCounts.bySession[sid] = (spanCounts.bySession[sid] ?? 0) + count;
+          }
+        } else {
+          const t = now();
+          const touched = new Set<string>();
+          for (const r of extractUsage(kind, data)) {
+            const runId = r.workflowRunId
+              ? linkWorkflow(r.sessionId, r.workflowRunId, r.workflowName)
+              : undefined;
+            store.addUsage({ ...r, ts: t, runId });
+            touched.add(r.sessionId);
+          }
+          for (const sid of touched) {
+            const s = store.getSession(sid);
+            if (s) broadcast(present(s));
+          }
+        }
+      } catch {
+        // telemetry must never fail the exporter
+      }
+      return ok();
+    });
+  }
+  app.get("/api/otel", (c) => c.json({ spans: spanCounts }));
+
   app.get("/api/sessions", (c) => c.json(store.listSessions().map(present)));
   app.get("/api/sessions/:id", (c) => {
     const id = c.req.param("id");
@@ -198,7 +276,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     const id = c.req.param("id");
     const run = store.getRun(id);
     if (!run) return c.json({ error: "not found" }, 404);
-    return c.json({ ...withStale(run), events: store.eventsOf(id) });
+    return c.json({
+      ...withStale(run),
+      events: store.eventsOf(id),
+      otelUsage: store.sumUsage({ runId: id }),
+    });
   });
 
   app.get("/api/stream", (c) =>

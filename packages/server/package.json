@@ -17,8 +17,9 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.8",
-    "hono": "^4.13.18",
     "@tlc-deck/core": "workspace:*",
-    "@tlc-deck/protocol": "workspace:*"
+    "@tlc-deck/protocol": "workspace:*",
+    "hono": "^4.13.18",
+    "protobufjs": "^8.8.1"
   }
 }

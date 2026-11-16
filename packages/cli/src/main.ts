@@ -48,8 +48,8 @@ const usage = `usage: tlc <command> [options]
   status [--feature f] [--run id] [--json]
   watch  [--feature f] [--run id]
   serve  [--port 7317] [--repo path]... [--no-content]
-  install   claude-code [--hooks] [--workflow] [--panel] [--dry-run]
-  uninstall claude-code [--hooks] [--workflow] [--panel] [--dry-run]
+  install   claude-code [--hooks] [--workflow] [--panel] [--otel] [--dry-run]
+  uninstall claude-code [--hooks] [--workflow] [--panel] [--otel] [--dry-run]
   run    [--feature f] [--harness h] [--only T1,T2] [--retries n] [--no-commit] [--resume] [--concurrency n]
   --version`;
 
@@ -71,6 +71,7 @@ const OPTIONS = {
   hooks: { type: "boolean" },
   workflow: { type: "boolean" },
   panel: { type: "boolean" },
+  otel: { type: "boolean" },
   "dry-run": { type: "boolean" },
   resume: { type: "boolean" },
   repo: { type: "string", multiple: true },
@@ -301,6 +302,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         hooks: values.hooks,
         workflow: values.workflow,
         panel: values.panel,
+        otel: values.otel,
         dryRun: values["dry-run"],
         env: io.env,
         stdout: io.stdout,
