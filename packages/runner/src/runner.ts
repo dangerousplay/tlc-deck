@@ -24,13 +24,8 @@ import {
   statusOutputJsonSchema,
   type TaskValue,
 } from "@tlc-deck/protocol";
-import {
-  type Driver,
-  type DriverFactory,
-  type DriverResult,
-  type Role,
-  unavailableDriverFactory,
-} from "./driver.js";
+import type { Driver, DriverFactory, DriverResult, Role } from "./driver.js";
+import { createDriverFactory, type DriverConfig } from "./drivers/index.js";
 import { commitFiles } from "./git.js";
 import { renderPrompt } from "./prompts.js";
 
@@ -139,7 +134,13 @@ export async function runPlan(opts: RunOptions): Promise<RunResult> {
   const plan: Plan = parsePlan(tasksMd, existsSync(specFile) ? readFileSync(specFile, "utf8") : "");
   const blocks = taskBlocks(tasksMd);
   const config = loadConfig({ repoDir: repo, env });
-  const factory = opts.driverFactory ?? unavailableDriverFactory;
+  const factory =
+    opts.driverFactory ??
+    createDriverFactory(
+      (typeof config.driver === "object" && config.driver !== null
+        ? config.driver
+        : {}) as DriverConfig,
+    );
   const defaultHarness = opts.harness ?? "claude";
   const retries = opts.retries ?? 2;
   const advisorOn = opts.advisor !== false;

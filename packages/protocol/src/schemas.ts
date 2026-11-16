@@ -111,6 +111,15 @@ export const AdvisorOutputSchema = z.object({
   steps: z.array(z.string()),
 });
 
-export const statusOutputJsonSchema = z.toJSONSchema(StatusOutputSchema);
-export const reviewerOutputJsonSchema = z.toJSONSchema(ReviewerOutputSchema);
-export const advisorOutputJsonSchema = z.toJSONSchema(AdvisorOutputSchema);
+/**
+ * JSON Schema for harness structured-output flags. `$schema` is dropped: `claude --json-schema`
+ * rejects the draft 2020-12 meta-schema URI that zod emits.
+ */
+function harnessSchema(schema: z.ZodType): Record<string, unknown> {
+  const { $schema: _drop, ...rest } = z.toJSONSchema(schema) as Record<string, unknown>;
+  return rest;
+}
+
+export const statusOutputJsonSchema = harnessSchema(StatusOutputSchema);
+export const reviewerOutputJsonSchema = harnessSchema(ReviewerOutputSchema);
+export const advisorOutputJsonSchema = harnessSchema(AdvisorOutputSchema);
