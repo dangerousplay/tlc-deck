@@ -21,8 +21,12 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { type ChartConfig, ChartContainer, ChartTooltip } from "@/components/ui/chart";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { clock, elapsed, formatCost, formatTokens, runCost, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { TaskContent } from "@/routes/task/task-page";
+import { taskHref } from "@/routes/task/task-view";
 
 export const BOARD_COLUMNS = [
   "pending",
@@ -136,12 +140,33 @@ export function MilestoneStepper({ run }: { run: RunState }) {
   );
 }
 
-function TaskCard({ task }: { task: TaskState }) {
+function TaskCard({
+  task,
+  runId,
+  onOpen,
+}: {
+  task: TaskState;
+  runId: string;
+  onOpen?: ((id: string) => void) | undefined;
+}) {
   return (
     <li
       data-testid="task-card"
-      className="space-y-1.5 rounded-lg border bg-background p-2.5 text-sm shadow-xs"
+      className="relative space-y-1.5 rounded-lg border bg-background p-2.5 text-sm shadow-xs hover:bg-muted/40"
     >
+      <a
+        href={taskHref(runId, task.id)}
+        data-testid="task-link"
+        aria-label={`Open task ${task.id}`}
+        className="absolute inset-0 rounded-lg"
+        onClick={(e) => {
+          if (!onOpen || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+          e.preventDefault();
+          onOpen(task.id);
+        }}
+      >
+        <span className="sr-only">Open task {task.id}</span>
+      </a>
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-xs font-semibold">{task.id}</span>
         {task.gate &&
@@ -186,7 +211,13 @@ function TaskCard({ task }: { task: TaskState }) {
   );
 }
 
-export function TaskBoard({ run }: { run: RunState }) {
+export function TaskBoard({
+  run,
+  onOpenTask,
+}: {
+  run: RunState;
+  onOpenTask?: (id: string) => void;
+}) {
   const tasks = Object.values(run.tasks);
   return (
     <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
@@ -221,7 +252,7 @@ export function TaskBoard({ run }: { run: RunState }) {
               ) : (
                 <ul className="space-y-2 pr-2">
                   {list.map((t) => (
-                    <TaskCard key={t.id} task={t} />
+                    <TaskCard key={t.id} task={t} runId={run.runId} onOpen={onOpenTask} />
                   ))}
                 </ul>
               )}
@@ -452,6 +483,8 @@ export function RunDetail({
   events: TlcEvent[];
   now?: number;
 }) {
+  const mobile = useIsMobile();
+  const [open, setOpen] = useState<string | null>(null);
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       <RunHeader run={run} now={now} />
@@ -461,8 +494,26 @@ export function RunDetail({
         </Section>
       )}
       <Section title="Tasks" description="Task board grouped by status">
-        <TaskBoard run={run} />
+        <TaskBoard run={run} {...(mobile ? {} : { onOpenTask: setOpen })} />
       </Section>
+      <Sheet open={open !== null} onOpenChange={(o) => !o && setOpen(null)}>
+        <SheetContent className="w-full overflow-y-auto p-4 sm:max-w-xl">
+          <SheetTitle className="sr-only">Task {open}</SheetTitle>
+          <SheetDescription className="sr-only">Task details</SheetDescription>
+          {open && (
+            <div className="space-y-3 pt-6">
+              <a
+                href={taskHref(run.runId, open)}
+                data-testid="task-full-page"
+                className="text-xs text-muted-foreground hover:underline"
+              >
+                Open full page
+              </a>
+              <TaskContent runId={run.runId} taskId={open} />
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
       <Section title="Blockers">
         <BlockersPanel blockers={run.blockers} />
       </Section>

@@ -12,6 +12,7 @@ import { Overview } from "@/pages/overview";
 import { RunPage } from "@/routes/run/run-page";
 import { SessionPage } from "@/routes/sessions/session-page";
 import { SessionsPage } from "@/routes/sessions/sessions-page";
+import { TaskPage } from "@/routes/task/task-page";
 
 const ICON = { light: Sun, dark: Moon, system: Monitor };
 const THEMES: Theme[] = ["light", "dark", "system"];
@@ -67,6 +68,7 @@ function ThemeToggle({ theme, setTheme }: { theme: Theme; setTheme: (t: Theme) =
 }
 
 function titleFor(path: string): string {
+  if (/^\/runs\/[^/]+\/tasks\//.test(path)) return "Task detail";
   if (/^\/runs\//.test(path)) return "Run detail";
   if (/^\/sessions\/[^/]+/.test(path)) return "Session detail";
   if (/^\/sessions\/?$/.test(path)) return "Sessions";
@@ -82,6 +84,7 @@ export function App({
 }) {
   const [theme, setTheme] = useTheme();
   useEffect(() => (connect ? connectStore() : undefined), [connect]);
+  const taskRoute = /^\/runs\/([^/]+)\/tasks\/([^/]+)/.exec(path);
   const runId = /^\/runs\/([^/]+)/.exec(path)?.[1];
   const sessionId = /^\/sessions\/([^/]+)/.exec(path)?.[1];
   const sessionsList = /^\/sessions\/?$/.test(path);
@@ -100,7 +103,12 @@ export function App({
             </div>
           </header>
           <main className="flex-1 p-4 md:p-6">
-            {runId ? (
+            {taskRoute?.[1] && taskRoute[2] ? (
+              <TaskPage
+                runId={decodeURIComponent(taskRoute[1])}
+                taskId={decodeURIComponent(taskRoute[2])}
+              />
+            ) : runId ? (
               <RunPage id={decodeURIComponent(runId)} />
             ) : sessionId ? (
               <SessionPage id={decodeURIComponent(sessionId)} />
