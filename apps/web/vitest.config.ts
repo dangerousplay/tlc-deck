@@ -1,3 +1,15 @@
+import { fileURLToPath } from "node:url";
+import react from "@vitejs/plugin-react";
 import { defineProject } from "vitest/config";
 
-export default defineProject({ test: { name: "web", include: ["src/**/*.test.ts"] } });
+export default defineProject({
+  plugins: [react()],
+  resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
+  test: {
+    name: "web",
+    environment: "jsdom",
+    environmentOptions: { jsdom: { url: "http://127.0.0.1/" } },
+    include: ["src/**/*.test.{ts,tsx}"],
+    setupFiles: ["src/test/setup.ts"],
+  },
+});

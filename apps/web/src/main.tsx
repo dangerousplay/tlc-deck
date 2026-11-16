@@ -1,4 +1,6 @@
 import { createRoot } from "react-dom/client";
+import { App } from "./app";
+import "./index.css";
 
 const root = document.getElementById("root");
-if (root) createRoot(root).render(<h1>tlc-deck</h1>);
+if (root) createRoot(root).render(<App />);
