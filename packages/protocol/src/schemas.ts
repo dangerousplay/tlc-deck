@@ -76,7 +76,67 @@ export const LogPayload = z.object({
   message: z.string(),
 });
 
+export const AGENT_ITEM_KINDS = [
+  "prompt",
+  "text",
+  "tool_call",
+  "tool_result",
+  "error",
+  "status",
+] as const;
+
+export const AgentItemSchema = z.object({
+  agentId: z.string(),
+  seq: z.number().int().min(0),
+  ts: z.number(),
+  kind: z.enum(AGENT_ITEM_KINDS),
+  text: z.string().optional(),
+  tool: z.string().optional(),
+  toolUseId: z.string().optional(),
+  input: z.unknown().optional(),
+  output: z.unknown().optional(),
+  isError: z.boolean().optional(),
+  truncated: z.boolean().optional(),
+  fullLength: z.number().int().optional(),
+});
+export type AgentItem = z.infer<typeof AgentItemSchema>;
+
+export const AgentUsageSchema = z.object({
+  input: z.number(),
+  output: z.number(),
+  cacheRead: z.number(),
+  cacheWrite: z.number(),
+  costUsd: z.number().nullable(),
+});
+
+export const AgentInfoSchema = z.object({
+  id: z.string(),
+  source: z.enum(["claude-code", "tlc-run"]),
+  sessionId: z.string().optional(),
+  workflowId: z.string().optional(),
+  runId: z.string().optional(),
+  task: z.string().optional(),
+  stage: z.string().optional(),
+  role: z.string().optional(),
+  label: z.string().optional(),
+  harness: z.string(),
+  model: z.string().optional(),
+  status: z.enum(["running", "done", "error"]),
+  startedAt: z.number(),
+  endedAt: z.number().optional(),
+  usage: AgentUsageSchema.optional(),
+});
+export type AgentInfo = z.infer<typeof AgentInfoSchema>;
+
+/** `tlc.agent` payload: partial upsert of an AgentInfo; only `id` is required. */
+export const AgentPayload = AgentInfoSchema.partial().required({ id: true });
+export type AgentValue = z.infer<typeof AgentPayload>;
+
+/** Optional shape of `RUN_STARTED.input` fields the deck reads. */
+export const RunStartedInputSchema = z.looseObject({ repoPath: z.string().optional() });
+
 export const CUSTOM_PAYLOADS = {
+  "tlc.agent": AgentPayload,
   "tlc.plan": PlanPayload,
   "tlc.task": TaskPayload,
   "tlc.blocker": BlockerPayload,

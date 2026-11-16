@@ -1,5 +1,11 @@
 import { EventSchema } from "@ag-ui/core/schemas";
-import { CUSTOM_PAYLOADS, type CustomName, type Envelope, EnvelopeSchema } from "./schemas.js";
+import {
+  CUSTOM_PAYLOADS,
+  type CustomName,
+  type Envelope,
+  EnvelopeSchema,
+  RunStartedInputSchema,
+} from "./schemas.js";
 
 export interface TlcEvent {
   type: string;
@@ -43,6 +49,10 @@ export function parseLine(line: string): ParseResult {
     (typeof obj.input !== "object" || obj.input === null)
   ) {
     return { ok: false, reason: "invalid RUN_STARTED: input must be an object" };
+  }
+  if (obj.type === "RUN_STARTED" && obj.input !== undefined) {
+    const ri = RunStartedInputSchema.safeParse(obj.input);
+    if (!ri.success) return { ok: false, reason: `invalid RUN_STARTED input: ${ri.error.message}` };
   }
   const base = EventSchema.safeParse(toValidate);
   if (!base.success) return { ok: false, reason: `invalid ${obj.type}: ${base.error.message}` };
