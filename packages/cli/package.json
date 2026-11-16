@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "tlc-deck": "dist/index.js"
+    "tlc": "dist/index.js"
   },
   "files": [
     "dist"
@@ -17,5 +17,9 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0"
+  },
+  "dependencies": {
+    "@tlc-deck/core": "workspace:*",
+    "@tlc-deck/protocol": "workspace:*"
   }
 }

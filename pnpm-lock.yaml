@@ -208,6 +208,13 @@ importers:
         version: 7.3.8(@types/node@22.20.5)
 
   packages/cli:
+    dependencies:
+      '@tlc-deck/core':
+        specifier: workspace:*
+        version: link:../core
+      '@tlc-deck/protocol':
+        specifier: workspace:*
+        version: link:../protocol
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
