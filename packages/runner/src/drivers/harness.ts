@@ -1,8 +1,18 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Driver, DriverRequest, DriverResult, DriverUsage } from "../driver.js";
-import { execCapture, extractJson, findBinary, num, obj, parseJsonLines, str } from "./exec.js";
+import type { Driver, DriverRequest, DriverResult } from "../driver.js";
+import {
+  agyParser,
+  claudeParser,
+  codexParser,
+  geminiParser,
+  opencodeParser,
+  type StreamItem,
+  type StreamParser,
+  type StreamResult,
+} from "../streams/index.js";
+import { execCapture, extractJson, findBinary } from "./exec.js";
 
 export interface DriverOptions {
   /** Binary name or path; defaults to the harness name. */
@@ -29,7 +39,10 @@ export interface HarnessSpec {
   name: string;
   /** Needs a schema file on disk (codex) and an output file. */
   buildArgs(req: DriverRequest, opts: DriverOptions, ctx: BuildContext): string[];
-  parse(stdout: string, ctx: BuildContext): DriverResult;
+  /** Fresh incremental parser of the harness's streaming output (DD-10). */
+  stream(): StreamParser;
+  /** Final DriverResult from the parsed stream. */
+  finish(result: StreamResult, ctx: BuildContext): DriverResult;
   needsFiles?: boolean;
 }
 
@@ -40,37 +53,16 @@ const dataFromText = (text: string | undefined, harness: string): unknown => {
   return data;
 };
 
-function envelopeUsage(env: Record<string, unknown>): DriverUsage | undefined {
-  const u = obj(env.usage);
-  const cost = env.total_cost_usd ?? env.cost_usd;
-  if (Object.keys(u).length === 0 && cost === undefined) return undefined;
-  const models = Object.keys(obj(env.modelUsage));
-  return {
-    input: num(u.input_tokens),
-    output: num(u.output_tokens),
-    cacheRead: num(u.cache_read_input_tokens),
-    cacheWrite: num(u.cache_creation_input_tokens),
-    costUsd: typeof cost === "number" ? cost : null,
-    ...(models[0] ? { model: models[0] } : {}),
-  };
-}
-
-function parseEnvelope(harness: string, stdout: string): DriverResult {
-  const env = extractJson(stdout);
-  if (env === undefined) throw new Error(`${harness}: output is not valid JSON`);
-  const e = obj(env);
-  if (e.is_error === true) {
-    throw new Error(`${harness}: ${str(e.result) ?? str(e.error) ?? "reported an error"}`);
-  }
-  const text = str(e.result) ?? str(e.response);
-  const data = e.structured_output ?? dataFromText(text, harness);
-  const usage = envelopeUsage(e);
-  const sessionId = str(e.session_id);
+/** Turns a finished stream into a DriverResult (structured status extraction per harness). */
+function finish(harness: string, r: StreamResult, requireEnd: boolean): DriverResult {
+  if (r.error) throw new Error(`${harness}: ${r.error}`);
+  if (requireEnd && !r.ended) throw new Error(`${harness}: no result event in output`);
+  const data = r.data ?? dataFromText(r.text, harness);
   return {
     data,
-    ...(text !== undefined ? { text } : {}),
-    ...(usage ? { usage } : {}),
-    ...(sessionId ? { sessionId } : {}),
+    ...(r.text !== undefined ? { text: r.text } : {}),
+    ...(r.usage ? { usage: r.usage } : {}),
+    ...(r.sessionId ? { sessionId: r.sessionId } : {}),
     exitCode: 0,
   };
 }
@@ -81,7 +73,8 @@ export const claudeSpec: HarnessSpec = {
     "-p",
     req.prompt,
     "--output-format",
-    "json",
+    "stream-json",
+    "--verbose",
     "--json-schema",
     schemaText(req),
     ...(req.model ? ["--model", req.model] : []),
@@ -92,7 +85,8 @@ export const claudeSpec: HarnessSpec = {
     tools(req.role),
     ...(opts.extraArgs ?? []),
   ],
-  parse: (stdout) => parseEnvelope("claude", stdout),
+  stream: claudeParser,
+  finish: (r) => finish("claude", r, true),
 };
 
 export const agySpec: HarnessSpec = {
@@ -101,7 +95,7 @@ export const agySpec: HarnessSpec = {
     "-p",
     req.prompt,
     "--output-format",
-    "json",
+    "stream-json",
     "--json-schema",
     schemaText(req),
     ...(req.model ? ["--model", req.model] : []),
@@ -109,7 +103,8 @@ export const agySpec: HarnessSpec = {
     ...(opts.allowUnsafe ? ["--dangerously-skip-permissions"] : []),
     ...(opts.extraArgs ?? []),
   ],
-  parse: (stdout) => parseEnvelope("agy", stdout),
+  stream: agyParser,
+  finish: (r) => finish("agy", r, true),
 };
 
 export const codexSpec: HarnessSpec = {
@@ -130,39 +125,16 @@ export const codexSpec: HarnessSpec = {
     ...(opts.extraArgs ?? []),
     req.prompt,
   ],
-  parse(stdout, ctx) {
-    const events = parseJsonLines(stdout);
-    let usage: DriverUsage | undefined;
-    let sessionId: string | undefined;
-    for (const ev of events) {
-      if (ev.type === "thread.started") sessionId = str(ev.thread_id) ?? sessionId;
-      if (ev.type === "turn.completed") {
-        const u = obj(ev.usage);
-        usage = {
-          input: (usage?.input ?? 0) + num(u.input_tokens),
-          output: (usage?.output ?? 0) + num(u.output_tokens),
-          cacheRead: (usage?.cacheRead ?? 0) + num(u.cached_input_tokens),
-          cacheWrite: 0,
-          costUsd: null,
-        };
-      }
-      if (ev.type === "turn.failed" || ev.type === "error") {
-        throw new Error(`codex: ${str(obj(ev.error).message) ?? str(ev.message) ?? "turn failed"}`);
-      }
-    }
+  stream: codexParser,
+  finish(r, ctx) {
+    if (r.error) throw new Error(`codex: ${r.error}`);
     let text: string | undefined;
     try {
       text = readFileSync(ctx.outFile ?? "", "utf8");
     } catch {
       throw new Error("codex: no output file written");
     }
-    return {
-      data: dataFromText(text, "codex"),
-      text,
-      ...(usage ? { usage } : {}),
-      ...(sessionId ? { sessionId } : {}),
-      exitCode: 0,
-    };
+    return finish("codex", { ...r, text, data: undefined }, false);
   },
 };
 
@@ -172,38 +144,14 @@ export const geminiSpec: HarnessSpec = {
     "-p",
     req.prompt,
     "-o",
-    "json",
+    "stream-json",
     ...(req.model ? ["-m", req.model] : []),
     "--approval-mode",
     "auto_edit",
     ...(opts.extraArgs ?? []),
   ],
-  parse(stdout) {
-    const env = obj(extractJson(stdout));
-    if (Object.keys(env).length === 0) throw new Error("gemini: output is not valid JSON");
-    if (env.error) throw new Error(`gemini: ${str(obj(env.error).message) ?? "reported an error"}`);
-    const text = str(env.response);
-    const data = dataFromText(text, "gemini");
-    let usage: DriverUsage | undefined;
-    for (const [model, m] of Object.entries(obj(obj(env.stats).models))) {
-      const t = obj(obj(m).tokens);
-      const cached = num(t.cached);
-      usage = {
-        input: (usage?.input ?? 0) + Math.max(0, num(t.prompt) - cached),
-        output: (usage?.output ?? 0) + num(t.candidates),
-        cacheRead: (usage?.cacheRead ?? 0) + cached,
-        cacheWrite: 0,
-        costUsd: null,
-        model: usage?.model ?? model,
-      };
-    }
-    return {
-      data,
-      ...(text !== undefined ? { text } : {}),
-      ...(usage ? { usage } : {}),
-      exitCode: 0,
-    };
-  },
+  stream: geminiParser,
+  finish: (r) => finish("gemini", r, true),
 };
 
 export const opencodeSpec: HarnessSpec = {
@@ -216,42 +164,10 @@ export const opencodeSpec: HarnessSpec = {
     ...(opts.extraArgs ?? []),
     req.prompt,
   ],
-  parse(stdout) {
-    const events = parseJsonLines(stdout);
-    if (events.length === 0) throw new Error("opencode: no JSON events in output");
-    let text: string | undefined;
-    let sessionId: string | undefined;
-    let usage: DriverUsage | undefined;
-    for (const ev of events) {
-      sessionId = str(ev.sessionID) ?? sessionId;
-      const part = obj(ev.part);
-      if (ev.type === "text" && typeof part.text === "string") text = part.text;
-      if (ev.type === "error") {
-        throw new Error(
-          `opencode: ${str(obj(obj(ev.error).data).message) ?? str(obj(ev.error).name) ?? "error"}`,
-        );
-      }
-      if (ev.type === "step_finish") {
-        const t = obj(part.tokens);
-        const cache = obj(t.cache);
-        const cost = part.cost;
-        usage = {
-          input: (usage?.input ?? 0) + num(t.input),
-          output: (usage?.output ?? 0) + num(t.output),
-          cacheRead: (usage?.cacheRead ?? 0) + num(cache.read),
-          cacheWrite: (usage?.cacheWrite ?? 0) + num(cache.write),
-          costUsd:
-            typeof cost === "number" ? (usage?.costUsd ?? 0) + cost : (usage?.costUsd ?? null),
-        };
-      }
-    }
-    return {
-      data: dataFromText(text, "opencode"),
-      ...(text !== undefined ? { text } : {}),
-      ...(usage ? { usage } : {}),
-      ...(sessionId ? { sessionId } : {}),
-      exitCode: 0,
-    };
+  stream: opencodeParser,
+  finish(r) {
+    if (!r.ended) throw new Error("opencode: no JSON events in output");
+    return finish("opencode", r, false);
   },
 };
 
@@ -292,9 +208,20 @@ export class CliDriver implements Driver {
         writeFileSync(ctx.schemaFile, schemaText(req));
       }
       const args = this.spec.buildArgs(req, this.opts, ctx);
+      const parser = this.spec.stream();
+      const emit = (items: StreamItem[]) => {
+        if (req.onItem) for (const it of items) req.onItem(it);
+      };
       const res = await execCapture(bin, args, {
         cwd: req.cwd,
         env,
+        onLine: (line) => {
+          try {
+            emit(parser.feed(line));
+          } catch {
+            // a parser bug must not break the run
+          }
+        },
         timeoutMs: this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         ...(req.signal ? { signal: req.signal } : {}),
       });
@@ -302,7 +229,8 @@ export class CliDriver implements Driver {
         const tail = (res.stderr || res.stdout).trim().slice(-500);
         throw new Error(`${this.spec.name} exited with code ${res.code}: ${tail}`);
       }
-      return this.spec.parse(res.stdout, ctx);
+      emit(parser.end());
+      return this.spec.finish(parser.result(), ctx);
     } finally {
       if (dir) rmSync(dir, { recursive: true, force: true });
     }

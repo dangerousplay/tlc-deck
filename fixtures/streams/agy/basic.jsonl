@@ -1,0 +1,5 @@
+{"type":"step_update","text_delta":"Checking "}
+{"type":"step_update","text_delta":"files."}
+{"type":"step_update","tool_name":"run_command","tool_call_id":"c1","tool_input":{"command":"pnpm check"}}
+{"type":"step_update","tool_call_id":"c1","tool_output":"ok"}
+{"type":"result","result":"done","structured_output":{"status":"Complete","files":["a.ts"],"gate":{"pass":true,"summary":"ok"},"deviations":[],"issues":[]},"session_id":"sess-agy","usage":{"input_tokens":7,"output_tokens":3}}

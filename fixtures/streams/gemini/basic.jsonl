@@ -1,0 +1,8 @@
+{"type":"init","session_id":"sess-gem","model":"gemini-3-pro"}
+{"type":"message","role":"user","content":"do it"}
+{"type":"message","role":"assistant","content":"Reading ","delta":true}
+{"type":"message","role":"assistant","content":"files.","delta":true}
+{"type":"tool_use","tool_name":"read_file","tool_id":"g1","parameters":{"path":"a.ts"}}
+{"type":"tool_result","tool_id":"g1","status":"success","output":"contents"}
+{"type":"message","role":"assistant","content":"```json\n{\"status\":\"Complete\",\"files\":[\"a.ts\"],\"gate\":{\"pass\":true,\"summary\":\"ok\"},\"deviations\":[],\"issues\":[]}\n```","delta":true}
+{"type":"result","status":"success","stats":{"input_tokens":90,"output_tokens":12,"cached":30,"models":{"gemini-3-pro":{}}}}

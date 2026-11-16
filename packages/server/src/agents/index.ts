@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { type ClaudeParseState, newClaudeState, parseClaudeLine } from "@tlc-deck/core";
-import type { AgentInfo, AgentItem, RunState } from "@tlc-deck/protocol";
+import { type AgentInfo, type AgentItem, AgentItemSchema, type RunState } from "@tlc-deck/protocol";
 import type { Store } from "../store.js";
 
 /** DD-04: unregister a session this long after SessionEnd. */
@@ -42,6 +42,14 @@ export interface AgentManagerOptions {
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+
+function safeJson(line: string): unknown {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+}
 
 function readJson(path: string): unknown {
   try {
@@ -83,7 +91,17 @@ interface SessionWatch {
   stopped: Set<string>;
 }
 
+/** One `tlc run` agent log (`agents/<runId>/<agentId>.ndjson`), tailed incrementally (AL-08). */
+interface RunLog {
+  path: string;
+  agentId: string;
+  offset: number;
+  partial: Buffer;
+}
+
 export class AgentManager {
+  private runRoots = new Set<string>();
+  private runLogs = new Map<string, RunLog>();
   private sessions = new Map<string, SessionWatch>();
   private listeners = new Map<string, Set<(item: AgentItem) => void>>();
   private timer: NodeJS.Timeout | undefined;
@@ -110,6 +128,14 @@ export class AgentManager {
     return () => {
       set.delete(fn);
     };
+  }
+
+  /**
+   * Announces a `<feature>/agents` directory of a repo. Only subdirectories named after a known
+   * run are read (AL-08); the runner writes `<runId>/<agentId>.ndjson` AgentItem lines there.
+   */
+  watchRunRoot(root: string): void {
+    this.runRoots.add(resolve(root));
   }
 
   /** Registers/updates sessions from a hook body. Only hooks announce paths (DD-04). */
@@ -155,12 +181,86 @@ export class AgentManager {
 
   private tick(): void {
     const t = this.now();
+    this.pollRunLogs();
     for (const [id, s] of this.sessions) {
       if (s.endedAt !== undefined && t - s.endedAt > UNREGISTER_MS) {
         this.sessions.delete(id);
         continue;
       }
       this.poll(s);
+    }
+  }
+
+  private pollRunLogs(): void {
+    try {
+      for (const root of this.runRoots) {
+        if (!existsSync(root)) continue;
+        for (const d of readdirSync(root, { withFileTypes: true })) {
+          if (!d.isDirectory() || !this.store.getRun(d.name)) continue;
+          const dir = join(root, d.name);
+          for (const f of readdirSync(dir, { withFileTypes: true })) {
+            if (!f.isFile() || !f.name.endsWith(".ndjson")) continue;
+            const path = join(dir, f.name);
+            if (!this.runLogs.has(path)) {
+              this.runLogs.set(path, {
+                path,
+                agentId: basename(f.name, ".ndjson"),
+                offset: 0,
+                partial: Buffer.alloc(0),
+              });
+            }
+          }
+        }
+      }
+      for (const log of this.runLogs.values()) this.readRunLog(log);
+    } catch {
+      // watchers must never take the server down
+    }
+  }
+
+  private readRunLog(log: RunLog): void {
+    let fd: number;
+    try {
+      fd = openSync(log.path, "r");
+    } catch {
+      return;
+    }
+    try {
+      const size = fstatSync(fd).size;
+      if (size < log.offset) {
+        log.offset = 0;
+        log.partial = Buffer.alloc(0);
+      }
+      if (size === log.offset) return;
+      const buf = Buffer.alloc(size - log.offset);
+      const n = readSync(fd, buf, 0, buf.length, log.offset);
+      log.offset += n;
+      let data = log.partial.length
+        ? Buffer.concat([log.partial, buf.subarray(0, n)])
+        : buf.subarray(0, n);
+      const items: AgentItem[] = [];
+      let nl = data.indexOf(0x0a);
+      while (nl !== -1) {
+        const line = data.subarray(0, nl).toString("utf8");
+        data = data.subarray(nl + 1);
+        const parsed = AgentItemSchema.safeParse(safeJson(line));
+        // The file name is the agent id; a log cannot write into another agent.
+        if (parsed.success && parsed.data.agentId === log.agentId) items.push(parsed.data);
+        nl = data.indexOf(0x0a);
+      }
+      log.partial = Buffer.from(data);
+      if (items.length === 0) return;
+      const out = this.opts.noContent
+        ? items.map((it) => {
+            const { text: _t, input: _i, output: _o, ...rest } = it;
+            return rest as AgentItem;
+          })
+        : items;
+      this.store.addAgentItems(out);
+      const subs = this.listeners.get(log.agentId);
+      if (subs) for (const it of out) for (const fn of subs) fn(it);
+    } finally {
+      closeSync(fd);
     }
   }
 

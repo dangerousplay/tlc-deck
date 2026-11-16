@@ -12,7 +12,14 @@ import {
   STALE_MS,
   tail,
 } from "@tlc-deck/core";
-import { type AgentItem, parseLine, type RunState, type TlcEvent } from "@tlc-deck/protocol";
+import {
+  type AgentInfo,
+  type AgentItem,
+  AgentPayload,
+  parseLine,
+  type RunState,
+  type TlcEvent,
+} from "@tlc-deck/protocol";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { AgentManager } from "./agents/index.js";
@@ -143,10 +150,28 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       ? { ...r, status: "stale" }
       : r;
 
+  /** AL-07: `tlc.agent` events of `tlc run` are partial upserts of an AgentInfo. */
+  const upsertRunAgent = (event: TlcEvent, runId: string) => {
+    const v = AgentPayload.safeParse((event as { value?: unknown }).value);
+    if (!v.success) return;
+    const prev = store.getAgent(v.data.id);
+    const patch = Object.fromEntries(Object.entries(v.data).filter(([, x]) => x !== undefined));
+    store.upsertAgent({
+      source: "tlc-run",
+      harness: event.metadata.harness ?? "unknown",
+      status: "running",
+      startedAt: event.timestamp ?? now(),
+      runId,
+      ...prev,
+      ...patch,
+    } as AgentInfo);
+  };
+
   /** Store + fold + broadcast. Returns false for duplicates. */
   const ingest = (event: TlcEvent, broadcast = true): boolean => {
     if (!store.insertEvent(event)) return false;
     const runId = event.metadata.runId;
+    if (event.type === "CUSTOM" && event.name === "tlc.agent") upsertRunAgent(event, runId);
     store.saveRun(fold(store.eventsOf(runId), { runId, now: now() }));
     if (broadcast) for (const s of subscribers) s(event);
     return true;
@@ -543,6 +568,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     for (const r of readRegistry(env)) repos.add(r.path);
     for (const repo of repos) {
       for (const file of findProgressFiles(repo)) {
+        agents.watchRunRoot(join(dirname(file), "agents"));
         if (tailers.has(file)) continue;
         for (const e of readEvents(file)) ingest(e, !initial);
         const ac = new AbortController();

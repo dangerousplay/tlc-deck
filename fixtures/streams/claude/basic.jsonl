@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"sess-claude","model":"claude-sonnet-5-5"}
+{"type":"assistant","message":{"model":"claude-sonnet-5-5","content":[{"type":"text","text":"Running the gate."},{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"pnpm check"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","content":"all green","is_error":false}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"done","structured_output":{"status":"Complete","files":["a.ts"],"gate":{"pass":true,"summary":"ok"},"deviations":[],"issues":[]},"session_id":"sess-claude","total_cost_usd":0.42,"usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":20,"cache_creation_input_tokens":10},"modelUsage":{"claude-sonnet-5-5":{}}}

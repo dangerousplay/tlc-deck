@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import {
   appendEvent,
+  capItem,
   foldRuns,
   loadConfig,
   type NewEvent,
@@ -14,6 +15,7 @@ import {
 } from "@tlc-deck/core";
 import {
   AdvisorOutputSchema,
+  type AgentItem,
   advisorOutputJsonSchema,
   type BlockerKind,
   PROTOCOL_V,
@@ -28,6 +30,7 @@ import type { Driver, DriverFactory, DriverResult, Role } from "./driver.js";
 import { createDriverFactory, type DriverConfig } from "./drivers/index.js";
 import { commitFiles } from "./git.js";
 import { renderPrompt } from "./prompts.js";
+import type { StreamItem } from "./streams/types.js";
 
 interface Schema<T> {
   safeParse(v: unknown): { success: true; data: T } | { success: false };
@@ -220,10 +223,42 @@ export async function runPlan(opts: RunOptions): Promise<RunResult> {
       ...(advice ? { advice } : {}),
     });
 
+  const agentsDir = join(dir, "agents", runId);
+  const usedAgentIds = new Set<string>();
+  const agentId = (task: string, stage: Stage, attempt: number) => {
+    const base = `${runId}-${task}-${stage}-${attempt}`;
+    let id = base;
+    for (let n = 2; usedAgentIds.has(id); n++) id = `${base}-${n}`;
+    usedAgentIds.add(id);
+    return id;
+  };
+  /** DD-09: per-agent log of AgentItem lines, written through capItem. */
+  const agentLog = (id: string) => {
+    const file = join(agentsDir, `${id}.ndjson`);
+    let seq = 0;
+    try {
+      mkdirSync(agentsDir, { recursive: true });
+      writeFileSync(file, "");
+    } catch {}
+    return (it: StreamItem) => {
+      const item = capItem({
+        ...it,
+        ts: it.ts ?? Date.now(),
+        agentId: id,
+        seq: seq++,
+      } as AgentItem);
+      try {
+        appendFileSync(file, `${JSON.stringify(item)}\n`);
+      } catch {}
+    };
+  };
+
   /** One headless role call. Throws TaskFailed (after emitting an error blocker) on failure. */
   async function call<S extends Schema<unknown>>(
     taskId: string,
     role: Role,
+    stage: Stage,
+    attempt: number,
     prompt: string,
     schema: S,
     jsonSchema: unknown,
@@ -231,6 +266,46 @@ export async function runPlan(opts: RunOptions): Promise<RunResult> {
     checkAbort();
     const rc = config.roles[role] ?? {};
     const harness = rc.harness ?? defaultHarness;
+    const aid = agentId(taskId, stage, attempt);
+    const write = agentLog(aid);
+    const startedAt = Date.now();
+    const agentBase = { id: aid, task: taskId, stage, role, harness, runId };
+    custom(
+      "tlc.agent",
+      {
+        ...agentBase,
+        source: "tlc-run",
+        ...(rc.model ? { model: rc.model } : {}),
+        label: `${stage} ${taskId}`,
+        status: "running",
+        startedAt,
+      },
+      role,
+      harness,
+    );
+    const endAgent = (status: "done" | "error", usage?: DriverResult["usage"]) =>
+      custom(
+        "tlc.agent",
+        {
+          id: aid,
+          status,
+          endedAt: Date.now(),
+          ...(usage
+            ? {
+                ...(usage.model ? { model: usage.model } : {}),
+                usage: {
+                  input: usage.input,
+                  output: usage.output,
+                  cacheRead: usage.cacheRead,
+                  cacheWrite: usage.cacheWrite,
+                  costUsd: usage.costUsd,
+                },
+              }
+            : {}),
+        },
+        role,
+        harness,
+      );
     let res: DriverResult;
     try {
       res = await driverFor(harness).run({
@@ -240,13 +315,17 @@ export async function runPlan(opts: RunOptions): Promise<RunResult> {
         ...(rc.effort ? { effort: rc.effort } : {}),
         cwd: repo,
         schema: jsonSchema,
+        onItem: write,
         ...(signal ? { signal } : {}),
       });
     } catch (err) {
+      write({ kind: "error", text: (err as Error).message, isError: true });
+      endAgent("error");
       checkAbort();
       blocker(taskId, "error", `${role} (${harness}) failed: ${(err as Error).message}`);
       throw new TaskFailed();
     }
+    endAgent("done", res.usage);
     checkAbort();
     if (res.usage) {
       const u = res.usage;
@@ -304,6 +383,8 @@ export async function runPlan(opts: RunOptions): Promise<RunResult> {
         call(
           id,
           "advisor",
+          "advise",
+          attempt,
           renderPrompt("advise", { ...base, problem }),
           AdvisorOutputSchema,
           advisorOutputJsonSchema,
@@ -323,6 +404,8 @@ export async function runPlan(opts: RunOptions): Promise<RunResult> {
         call(
           id,
           "implementer",
+          "implement",
+          attempt,
           renderPrompt("implement", { ...base, advice: adviceBlock(advice) }),
           StatusOutputSchema,
           statusOutputJsonSchema,
@@ -357,6 +440,8 @@ export async function runPlan(opts: RunOptions): Promise<RunResult> {
           call(
             id,
             "reviewer",
+            "verify",
+            attempt,
             renderPrompt("review", { ...base, report: JSON.stringify(report, null, 2) }),
             ReviewerOutputSchema,
             reviewerOutputJsonSchema,
@@ -376,6 +461,8 @@ export async function runPlan(opts: RunOptions): Promise<RunResult> {
         call(
           id,
           "implementer",
+          "fix",
+          attempt,
           renderPrompt("fix", {
             ...base,
             findings: problem.findings.map((f) => `- ${f}`).join("\n"),

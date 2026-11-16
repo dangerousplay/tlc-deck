@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"thr-1"}
+{"type":"item.completed","item":{"id":"i1","type":"command_execution","command":"pnpm check","aggregated_output":"ok","exit_code":0}}
+{"type":"item.completed","item":{"type":"agent_message","text":"{\"status\":\"Complete\",\"files\":[\"a.ts\"],\"gate\":{\"pass\":true,\"summary\":\"ok\"},\"deviations\":[],\"issues\":[]}"}}
+{"type":"turn.completed","usage":{"input_tokens":200,"cached_input_tokens":50,"output_tokens":40}}

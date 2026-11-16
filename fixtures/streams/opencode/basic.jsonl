@@ -1,0 +1,4 @@
+{"type":"step_start","sessionID":"ses-oc","part":{}}
+{"type":"tool_use","sessionID":"ses-oc","part":{"callID":"o1","tool":"bash","state":{"status":"completed","input":{"command":"pnpm check"},"output":"ok"}}}
+{"type":"text","sessionID":"ses-oc","part":{"text":"Result: {\"status\":\"Complete\",\"files\":[\"a.ts\"],\"gate\":{\"pass\":true,\"summary\":\"ok\"},\"deviations\":[],\"issues\":[]}"}}
+{"type":"step_finish","sessionID":"ses-oc","part":{"cost":0.05,"tokens":{"input":11,"output":22,"cache":{"read":3,"write":4}}}}

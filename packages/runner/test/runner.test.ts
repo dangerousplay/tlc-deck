@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fold, readEvents } from "@tlc-deck/core";
@@ -377,4 +377,62 @@ test("SIGINT emits RUN_ERROR interrupted and stops", async () => {
   expect(evs.at(-1)).toMatchObject({ type: "RUN_ERROR", code: "interrupted" });
   expect(state(res.runId).status).toBe("interrupted");
   expect(driver.calls.map((c) => c.role)).toEqual(["implementer"]);
+});
+
+test("agent logs: tlc.agent start/end events and per-agent ndjson written through capItem", async () => {
+  const driver = new FakeDriver(
+    {
+      implementer: [
+        (req) => {
+          req.onItem?.({
+            kind: "tool_call",
+            tool: "Bash",
+            input: { command: "echo sk-abcdefghijklmnopqrstuvwxyz" },
+          });
+          return status({ files: [`${taskOf(req)}.txt`] });
+        },
+      ],
+      reviewer: [pass],
+    },
+    "fake",
+    writer,
+  );
+  const res = await runPlan({
+    repo,
+    feature,
+    only: ["T1"],
+    env: { HOME: root },
+    driverFactory: () => driver,
+  });
+  expect(res.code).toBe(0);
+  const agentEvents = readEvents(progress()).filter(
+    (e) => e.type === "CUSTOM" && e.name === "tlc.agent",
+  );
+  const values = agentEvents.map((e) => (e as unknown as { value: Record<string, unknown> }).value);
+  const impl = `${res.runId}-T1-implement-1`;
+  const verify = `${res.runId}-T1-verify-1`;
+  expect(values.map((v) => `${v.id}:${v.status}`)).toEqual([
+    `${impl}:running`,
+    `${impl}:done`,
+    `${verify}:running`,
+    `${verify}:done`,
+  ]);
+  expect(values[0]).toMatchObject({
+    source: "tlc-run",
+    task: "T1",
+    stage: "implement",
+    role: "implementer",
+    runId: res.runId,
+  });
+  expect(values[1]).toMatchObject({ usage: { input: 10, output: 5, costUsd: 0.01 } });
+  const log = join(repo, ".specs", "features", feature, "agents", res.runId, `${impl}.ndjson`);
+  const items = readFileSync(log, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  expect(items.map((i) => [i.seq, i.kind, i.agentId])).toEqual([
+    [0, "tool_call", impl],
+    [1, "text", impl],
+  ]);
+  expect(JSON.stringify(items[0]?.input)).not.toContain("sk-abcdefghij");
 });

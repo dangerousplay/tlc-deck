@@ -1,3 +1,5 @@
+import type { StreamItem } from "./streams/types.js";
+
 export type Role = "implementer" | "reviewer" | "advisor";
 
 export interface DriverUsage {
@@ -18,6 +20,8 @@ export interface DriverRequest {
   /** JSON Schema of the expected structured output. */
   schema: unknown;
   signal?: AbortSignal;
+  /** Receives normalised agent items as the harness streams them. */
+  onItem?: (item: StreamItem) => void;
 }
 
 export interface DriverResult {
@@ -70,6 +74,8 @@ export class FakeDriver implements Driver {
     if (r === undefined) throw new Error(`FakeDriver: no response scripted for ${req.role}`);
     if (typeof r === "function") r = r(req);
     if (r instanceof Error) throw r;
+    const text = r.text ?? (r.data === undefined ? undefined : JSON.stringify(r.data));
+    if (text !== undefined) req.onItem?.({ kind: "text", text });
     return r;
   }
 }

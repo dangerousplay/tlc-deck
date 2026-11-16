@@ -7,6 +7,8 @@ export interface ExecOptions {
   env?: NodeJS.ProcessEnv;
   timeoutMs: number;
   signal?: AbortSignal;
+  /** Called for every complete stdout line as it arrives (streaming output). */
+  onLine?: (line: string) => void;
 }
 
 export interface ExecResult {
@@ -46,6 +48,15 @@ export function execCapture(bin: string, args: string[], opts: ExecOptions): Pro
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let lineBuf = "";
+    child.stdout.setEncoding("utf8");
+    const feed = (chunk: string, final = false) => {
+      if (!opts.onLine) return;
+      lineBuf += chunk;
+      const lines = lineBuf.split("\n");
+      lineBuf = final ? "" : (lines.pop() ?? "");
+      for (const l of final ? lines.filter((x) => x) : lines) opts.onLine(l);
+    };
     const done = (fn: () => void) => {
       if (settled) return;
       settled = true;
@@ -63,8 +74,9 @@ export function execCapture(bin: string, args: string[], opts: ExecOptions): Pro
     };
     if (opts.signal?.aborted) onAbort();
     else opts.signal?.addEventListener("abort", onAbort, { once: true });
-    child.stdout.on("data", (d) => {
+    child.stdout.on("data", (d: string) => {
       stdout += d;
+      feed(d);
     });
     child.stderr.on("data", (d) => {
       stderr += d;
@@ -72,7 +84,12 @@ export function execCapture(bin: string, args: string[], opts: ExecOptions): Pro
     child.on("error", (err) =>
       done(() => reject(new Error(`${bin} failed to start: ${err.message}`))),
     );
-    child.on("close", (code) => done(() => resolve({ stdout, stderr, code: code ?? 1 })));
+    child.on("close", (code) =>
+      done(() => {
+        feed("", true);
+        resolve({ stdout, stderr, code: code ?? 1 });
+      }),
+    );
   });
 }
 

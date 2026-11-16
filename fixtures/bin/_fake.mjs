@@ -31,6 +31,30 @@ export function run(harness, argv) {
   switch (harness) {
     case "claude":
       out({
+        type: "system",
+        subtype: "init",
+        session_id: "sess-claude",
+        model: "claude-sonnet-5-5",
+      });
+      out({
+        type: "assistant",
+        message: {
+          model: "claude-sonnet-5-5",
+          content: [
+            { type: "text", text: "Running the gate." },
+            { type: "tool_use", id: "tu1", name: "Bash", input: { command: "pnpm check" } },
+          ],
+        },
+      });
+      out({
+        type: "user",
+        message: {
+          content: [
+            { type: "tool_result", tool_use_id: "tu1", content: "all green", is_error: false },
+          ],
+        },
+      });
+      out({
         type: "result",
         subtype: "success",
         is_error: false,
@@ -50,7 +74,17 @@ export function run(harness, argv) {
       });
       break;
     case "agy":
+      out({ type: "step_update", text_delta: "Checking " });
+      out({ type: "step_update", text_delta: "files." });
       out({
+        type: "step_update",
+        tool_name: "run_command",
+        tool_call_id: "c1",
+        tool_input: { command: "pnpm check" },
+      });
+      out({ type: "step_update", tool_call_id: "c1", tool_output: "ok" });
+      out({
+        type: "result",
         result: "done",
         structured_output: status,
         session_id: "sess-agy",
@@ -58,17 +92,43 @@ export function run(harness, argv) {
       });
       break;
     case "gemini":
+      out({ type: "init", session_id: "sess-gem", model: "gemini-3-pro" });
+      out({ type: "message", role: "user", content: "do it" });
+      out({ type: "message", role: "assistant", content: "Reading ", delta: true });
+      out({ type: "message", role: "assistant", content: "files.", delta: true });
       out({
-        response: `\`\`\`json\n${statusText}\n\`\`\``,
-        stats: {
-          models: { "gemini-3-pro": { tokens: { prompt: 90, candidates: 12, cached: 30 } } },
-        },
+        type: "tool_use",
+        tool_name: "read_file",
+        tool_id: "g1",
+        parameters: { path: "a.ts" },
+      });
+      out({ type: "tool_result", tool_id: "g1", status: "success", output: "contents" });
+      out({
+        type: "message",
+        role: "assistant",
+        content: `\`\`\`json\n${statusText}\n\`\`\``,
+        delta: true,
+      });
+      out({
+        type: "result",
+        status: "success",
+        stats: { input_tokens: 90, output_tokens: 12, cached: 30, models: { "gemini-3-pro": {} } },
       });
       break;
     case "codex": {
       const i = argv.indexOf("-o");
       if (mode !== "nofile" && i >= 0) writeFileSync(argv[i + 1], statusText);
       out({ type: "thread.started", thread_id: "thr-1" });
+      out({
+        type: "item.completed",
+        item: {
+          id: "i1",
+          type: "command_execution",
+          command: "pnpm check",
+          aggregated_output: "ok",
+          exit_code: 0,
+        },
+      });
       out({ type: "item.completed", item: { type: "agent_message", text: statusText } });
       out({
         type: "turn.completed",
@@ -78,6 +138,15 @@ export function run(harness, argv) {
     }
     case "opencode":
       out({ type: "step_start", sessionID: "ses-oc", part: {} });
+      out({
+        type: "tool_use",
+        sessionID: "ses-oc",
+        part: {
+          callID: "o1",
+          tool: "bash",
+          state: { status: "completed", input: { command: "pnpm check" }, output: "ok" },
+        },
+      });
       out({ type: "text", sessionID: "ses-oc", part: { text: `Result: ${statusText}` } });
       if (mode !== "nostep") {
         out({

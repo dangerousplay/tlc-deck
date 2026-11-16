@@ -285,3 +285,85 @@ test("store purge: items after 7 days, agents after the retention window", () =>
   expect(st.agentItems("old")).toEqual([]);
   st.close();
 });
+
+test("tlc run agents: tlc.agent events upsert, agents/<runId>/*.ndjson served through the API", async () => {
+  const feat = join(repo, ".specs", "features", "f");
+  const runId = "tlc_RUNLOG";
+  const meta = {
+    v: 1,
+    seq: 0,
+    runId,
+    threadId: "repo#f",
+    harness: "codex",
+    driver: "runner",
+    source: "runner",
+  };
+  const file = join(feat, "progress.ndjson");
+  appendEvent(file, {
+    type: "RUN_STARTED",
+    timestamp: Date.now(),
+    threadId: "repo#f",
+    runId,
+    input: { feature: "f", repoPath: repo },
+    metadata: meta,
+  } as NewEvent);
+  const aid = `${runId}-T1-implement-1`;
+  appendEvent(file, {
+    type: "CUSTOM",
+    timestamp: Date.now(),
+    name: "tlc.agent",
+    value: {
+      id: aid,
+      source: "tlc-run",
+      runId,
+      task: "T1",
+      stage: "implement",
+      role: "implementer",
+      harness: "codex",
+      status: "running",
+      startedAt: Date.now(),
+    },
+    metadata: meta,
+  } as NewEvent);
+  const logDir = join(feat, "agents", runId);
+  mkdirSync(logDir, { recursive: true });
+  const log = join(logDir, `${aid}.ndjson`);
+  const item = (seq: number, text: string) =>
+    `${JSON.stringify({ agentId: aid, seq, ts: Date.now(), kind: "text", text })}\n`;
+  writeFileSync(log, item(0, "first"));
+  // a log may not write into another agent
+  writeFileSync(
+    join(logDir, "other.ndjson"),
+    `${JSON.stringify({ agentId: "victim", seq: 0, ts: 1, kind: "text", text: "x" })}\n`,
+  );
+
+  const s = await boot();
+  const listed = await until(async () => {
+    const a = await agentsOf(s, `?run=${runId}&task=T1`);
+    return a.length ? a : undefined;
+  });
+  expect(listed[0]).toMatchObject({ id: aid, source: "tlc-run", stage: "implement" });
+  const items = await until(async () => {
+    const r = (await (await fetch(`${s.url}/api/agents/${aid}/items`)).json()) as AgentItem[];
+    return r.length ? r : undefined;
+  });
+  expect(items.map((i) => i.text)).toEqual(["first"]);
+  const c = sse(`${s.url}/api/agents/${aid}/stream`);
+  await until(() => c.text().includes("first"));
+  appendFileSync(log, item(1, "second"));
+  await until(() => c.text().includes("second"), 1000);
+  appendEvent(file, {
+    type: "CUSTOM",
+    timestamp: Date.now(),
+    name: "tlc.agent",
+    value: { id: aid, status: "done", endedAt: Date.now() },
+    metadata: meta,
+  } as NewEvent);
+  const done = await until(async () => {
+    const a = (await agentsOf(s, `?run=${runId}`)).find((x) => x.id === aid);
+    return a?.status === "done" ? a : undefined;
+  });
+  expect(done).toMatchObject({ task: "T1", stage: "implement", harness: "codex" });
+  expect((await fetch(`${s.url}/api/agents/victim/items`)).status).toBe(404);
+  c.stop();
+});
