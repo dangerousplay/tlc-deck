@@ -1,0 +1,3 @@
+#!/usr/bin/env node
+import { run } from "./_fake.mjs";
+run("agy", process.argv.slice(2));
