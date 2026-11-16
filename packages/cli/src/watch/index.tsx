@@ -1,4 +1,14 @@
-import { fold, groupByRun, newestActiveRun, readEvents, tail } from "@tlc-deck/core";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import {
+  fold,
+  groupByRun,
+  newestActiveRun,
+  parseTaskDetails,
+  readEvents,
+  type TaskDetails,
+  tail,
+} from "@tlc-deck/core";
 import type { RunState, TlcEvent } from "@tlc-deck/protocol";
 import { render, Text } from "ink";
 import { exitCodeFor, formatEventLine, isTerminal, summaryLines } from "./model.js";
@@ -28,6 +38,21 @@ function pickRunId(events: TlcEvent[], flag: string | undefined, now: number): s
 
 const LOG_LIMIT = 5;
 
+/** Task details from tasks.md/spec.md next to progress.ndjson; undefined when unavailable. */
+function loadDetails(file: string): Record<string, TaskDetails> | undefined {
+  const dir = dirname(file);
+  try {
+    const tasksMd = readFileSync(join(dir, "tasks.md"), "utf8");
+    let specMd: string | undefined;
+    try {
+      specMd = readFileSync(join(dir, "spec.md"), "utf8");
+    } catch {}
+    return parseTaskDetails(tasksMd, specMd);
+  } catch {
+    return undefined;
+  }
+}
+
 /** `tlc watch`: follows the NDJSON file until the chosen run ends. Resolves to the exit code. */
 export async function runWatch(opts: WatchOptions): Promise<number> {
   const clock = opts.now ?? Date.now;
@@ -43,7 +68,16 @@ export async function runWatch(opts: WatchOptions): Promise<number> {
 
   const current = (): RunState => fold(events, { runId: runId ?? "", now: clock() });
   const frame = () => (
-    <WatchView run={current()} harness={harness} logs={logs} now={clock()} tick={tick} />
+    <WatchView
+      run={current()}
+      harness={harness}
+      logs={logs}
+      now={clock()}
+      tick={tick}
+      interactive={opts.tty}
+      details={loadDetails(opts.file)}
+      events={events}
+    />
   );
 
   let instance: ReturnType<typeof render> | undefined;

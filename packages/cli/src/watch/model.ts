@@ -123,3 +123,29 @@ export function summaryLines(run: RunState, now: number): string[] {
   }
   return lines;
 }
+
+export interface StageEntry {
+  time: number | undefined;
+  status: string;
+  stage?: string;
+  attempt?: number;
+}
+
+/** Stage history of one task: its `tlc.task` events in order. */
+export function taskHistory(events: TlcEvent[], id: string): StageEntry[] {
+  const out: StageEntry[] = [];
+  for (const ev of events) {
+    if (ev.type !== "CUSTOM" || ev.name !== "tlc.task") continue;
+    const v = obj((ev as { value?: unknown }).value);
+    if (v.id !== id) continue;
+    out.push({
+      time: typeof ev.timestamp === "number" ? ev.timestamp : undefined,
+      status: String(v.status),
+      ...(typeof v.stage === "string" ? { stage: v.stage } : {}),
+      ...(typeof v.attempt === "number" ? { attempt: v.attempt } : {}),
+    });
+  }
+  return out;
+}
+
+export { hhmmss };

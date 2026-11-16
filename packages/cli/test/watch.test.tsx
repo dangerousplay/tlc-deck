@@ -2,7 +2,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { appendEvent, fold, type NewEvent } from "@tlc-deck/core";
+import { appendEvent, fold, type NewEvent, parseTaskDetails } from "@tlc-deck/core";
 import type { TlcEvent } from "@tlc-deck/protocol";
 import { render } from "ink-testing-library";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -153,4 +153,58 @@ test("follows a file that grows and picks --run", async () => {
   expect(code).toBe(0);
   expect(out).toContain("run started r1");
   expect(out).toContain("task T1 done");
+});
+
+test("task focus: select, detail, back", async () => {
+  n = 0;
+  const run = fold(
+    [
+      started(),
+      plan(),
+      task("T1", "done"),
+      task("T2", "running", { stage: "verify" }),
+    ] as unknown as TlcEvent[],
+    { now: T0 + 60_000 },
+  );
+  const events = [
+    started(),
+    plan(),
+    task("T2", "running", { stage: "implement" }),
+    task("T2", "running", { stage: "verify" }),
+  ] as unknown as TlcEvent[];
+  const details = parseTaskDetails(
+    "### T1: First\n\n**What**: x\n\n---\n\n### T2: Second\n\n**What**: Do the second thing\n**Where**: `src/x.ts`\n**Depends on**: T1\n**Requirement**: AA-01\n\n**Done when**:\n- [x] it works\n- [ ] it ships\n",
+    "- AA-01: criterion text\n",
+  );
+  const r = render(
+    <WatchView
+      run={run}
+      logs={[]}
+      now={T0 + 60_000}
+      interactive
+      details={details}
+      events={events}
+    />,
+  );
+  const tick = () => new Promise((res) => setTimeout(res, 30));
+  await tick();
+  expect(r.lastFrame()).toContain("> | T2 Second");
+  r.stdin.write("\u001B[B"); // down -> T1
+  await tick();
+  expect(r.lastFrame()).toContain("> T1 First");
+  r.stdin.write("\u001B[A"); // up -> T2
+  await tick();
+  r.stdin.write("\r");
+  await tick();
+  const f = r.lastFrame() as string;
+  expect(f).toContain("Do the second thing");
+  expect(f).toContain("[x] it works");
+  expect(f).toContain("AA-01: criterion text");
+  expect(f).toContain("History");
+  expect(f).toContain("running implement");
+  expect(f).toContain("running verify");
+  r.stdin.write("\u001B");
+  await tick();
+  await tick();
+  expect(r.lastFrame()).toContain("Running (1)");
 });
