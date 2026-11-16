@@ -42,3 +42,30 @@ export function elapsed(run: RunState, now: number): string {
   if (m > 0) return `${m}m ${s % 60}s`;
   return `${s}s`;
 }
+
+export function formatTokens(n: number | null): string {
+  if (n === null) return "-";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+export function timeAgo(ts: number | undefined, now: number): string {
+  if (!ts) return "-";
+  const s = Math.max(0, Math.floor((now - ts) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+export function isToday(ts: number | undefined, now: number): boolean {
+  if (!ts) return false;
+  return new Date(ts).toDateString() === new Date(now).toDateString();
+}
+
+export function clock(ts: number): string {
+  return new Date(ts).toISOString().slice(11, 19);
+}

@@ -1,5 +1,6 @@
 import type { RunState, TlcEvent } from "@tlc-deck/protocol";
 import { useEffect, useState } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useDeck } from "@/lib/store";
 import { RunDetail } from "./run-detail";
 
@@ -27,6 +28,6 @@ export function RunPage({ id, fetchFn }: { id: string; fetchFn?: typeof fetch })
   }, [id, live, fetchFn]);
   if (missing) return <p className="text-sm text-muted-foreground">Run not found.</p>;
   const run = live ?? data?.run;
-  if (!run) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (!run) return <Skeleton className="h-40 w-full rounded-xl" />;
   return <RunDetail run={run} events={data?.events ?? []} />;
 }

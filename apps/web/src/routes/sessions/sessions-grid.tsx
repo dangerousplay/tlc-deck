@@ -1,31 +1,26 @@
+import { Bot, Coins, Cpu, MonitorDot, Wrench } from "lucide-react";
+import { EmptyState, SessionStateBadge } from "@/components/status";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { formatCost } from "@/lib/format";
-import type { SessionInfo, SessionState } from "@/lib/store";
+import type { SessionInfo } from "@/lib/store";
 
-const VARIANT: Record<SessionState, "default" | "warning" | "secondary" | "outline"> = {
-  working: "default",
-  waiting: "warning",
-  idle: "secondary",
-  ended: "outline",
-};
+export { SessionStateBadge };
 
 export function sessionTokens(s: SessionInfo): number | null {
   const u = s.usage;
   return u ? u.input + u.output + u.cacheRead + u.cacheWrite : null;
 }
 
-export function SessionStateBadge({ state }: { state: SessionState }) {
-  return (
-    <Badge variant={VARIANT[state]} data-testid="session-state">
-      {state}
-    </Badge>
-  );
-}
-
 export function RunBadge({ runId }: { runId: string }) {
   return (
     <a href={`/runs/${encodeURIComponent(runId)}`} data-testid="linked-run">
-      <Badge variant="success">run {runId}</Badge>
+      <Badge
+        variant="outline"
+        className="border-emerald-500/25 bg-emerald-500/10 font-mono text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
+      >
+        run {runId}
+      </Badge>
     </a>
   );
 }
@@ -33,8 +28,8 @@ export function RunBadge({ runId }: { runId: string }) {
 export function SessionCard({ session: s }: { session: SessionInfo }) {
   const tokens = sessionTokens(s);
   return (
-    <div className="space-y-2 rounded-lg border p-3" data-testid="session-card">
-      <div className="flex items-center justify-between gap-2">
+    <Card className="gap-3 py-4" data-testid="session-card">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 px-4">
         <a
           href={`/sessions/${encodeURIComponent(s.sessionId)}`}
           className="truncate font-medium hover:underline"
@@ -43,42 +38,59 @@ export function SessionCard({ session: s }: { session: SessionInfo }) {
           {s.project ?? s.sessionId}
         </a>
         <SessionStateBadge state={s.state} />
-      </div>
-      <div className="text-xs text-muted-foreground" data-testid="session-model">
-        {s.model ?? "unknown model"}
-      </div>
-      {s.currentTool ? (
-        <div className="font-mono text-sm" data-testid="session-tool">
-          {s.currentTool}
+      </CardHeader>
+      <CardContent className="space-y-3 px-4">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1" data-testid="session-model">
+            <Cpu className="size-3" aria-hidden />
+            {s.model ?? "unknown model"}
+          </span>
         </div>
-      ) : null}
-      <div className="flex gap-3 text-xs text-muted-foreground">
-        <span data-testid="session-tokens">
-          {tokens === null ? "- tokens" : `${tokens} tokens`}
-        </span>
-        <span data-testid="session-cost">{formatCost(s.usage ? s.usage.costUsd : null)}</span>
-        <span data-testid="session-subagents">
-          {s.subagents.length} subagent{s.subagents.length === 1 ? "" : "s"}
-        </span>
-      </div>
-      {s.subagents.length > 0 ? (
-        <ul className="text-xs" data-testid="session-subagent-list">
-          {s.subagents.map((a) => (
-            <li key={a.agentId}>{a.agentType ?? a.agentId}</li>
-          ))}
-        </ul>
-      ) : null}
-      {s.linkedRun ? <RunBadge runId={s.linkedRun} /> : null}
-    </div>
+        {s.currentTool ? (
+          <div
+            className="inline-flex items-center gap-1.5 rounded-md border bg-muted px-2 py-1 font-mono text-xs"
+            data-testid="session-tool"
+          >
+            <Wrench className="size-3" aria-hidden />
+            {s.currentTool}
+          </div>
+        ) : null}
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-muted-foreground">
+          <span className="flex items-center gap-1" data-testid="session-tokens">
+            {tokens === null ? "- tokens" : `${tokens} tokens`}
+          </span>
+          <span className="flex items-center gap-1" data-testid="session-cost">
+            <Coins className="size-3" aria-hidden />
+            {formatCost(s.usage ? s.usage.costUsd : null)}
+          </span>
+          <span className="flex items-center gap-1" data-testid="session-subagents">
+            <Bot className="size-3" aria-hidden />
+            {s.subagents.length} subagent{s.subagents.length === 1 ? "" : "s"}
+          </span>
+        </div>
+        {s.subagents.length > 0 ? (
+          <ul className="flex flex-wrap gap-1" data-testid="session-subagent-list">
+            {s.subagents.map((a) => (
+              <li key={a.agentId}>
+                <Badge variant="secondary" className="font-mono">
+                  {a.agentType ?? a.agentId}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {s.linkedRun ? <RunBadge runId={s.linkedRun} /> : null}
+      </CardContent>
+    </Card>
   );
 }
 
 export function SessionsGrid({ sessions }: { sessions: SessionInfo[] }) {
   if (sessions.length === 0) {
-    return <p className="text-sm text-muted-foreground">No live sessions.</p>;
+    return <EmptyState icon={MonitorDot}>No live sessions.</EmptyState>;
   }
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {sessions.map((s) => (
         <SessionCard key={s.sessionId} session={s} />
       ))}

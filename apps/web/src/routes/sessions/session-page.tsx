@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { type SessionEventInfo, type SessionInfo, useDeck } from "@/lib/store";
 import { SessionDetail } from "./session-detail";
 
@@ -29,6 +30,6 @@ export function SessionPage({ id, fetchFn }: { id: string; fetchFn?: typeof fetc
   }, [id, live, fetchFn]);
   if (missing) return <p className="text-sm text-muted-foreground">Session not found.</p>;
   const session = live ?? data?.session;
-  if (!session) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (!session) return <Skeleton className="h-40 w-full rounded-xl" />;
   return <SessionDetail session={session} events={data?.events ?? []} />;
 }
