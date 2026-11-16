@@ -4,9 +4,9 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-
   "files": [
-    "dist"
+    "dist",
+    "prompts"
   ],
   "scripts": {
     "build": "tsc -b",
@@ -15,5 +15,9 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0"
+  },
+  "dependencies": {
+    "@tlc-deck/core": "workspace:*",
+    "@tlc-deck/protocol": "workspace:*"
   }
 }

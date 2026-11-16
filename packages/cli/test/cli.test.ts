@@ -103,3 +103,46 @@ test("version and unknown command", async () => {
   expect((await tlc(["--version"])).out).toBe("1.2.3\n");
   expect((await tlc(["bogus"])).code).toBe(2);
 });
+
+test("tlc run drives the runner with an injected driver", async () => {
+  const { FakeDriver } = await import("@tlc-deck/runner");
+  const { writeFileSync: wf } = await import("node:fs");
+  const driver = new FakeDriver(
+    {
+      implementer: [
+        {
+          data: {
+            status: "Complete",
+            files: ["a.txt"],
+            gate: { pass: true, summary: "ok" },
+            deviations: [],
+            issues: [],
+          },
+          exitCode: 0,
+        },
+      ],
+      reviewer: [{ data: { verdict: "pass", findings: [] }, exitCode: 0 }],
+    },
+    "fake",
+    (req) => {
+      if (req.role === "implementer") wf(join(repo, "a.txt"), "x\n");
+    },
+  );
+  let out = "";
+  const code = await run(["run", "--only", "T1", "--no-commit"], {
+    cwd: repo,
+    env: { HOME: home },
+    stdout: (t) => {
+      out += t;
+    },
+    stderr: () => {},
+    version: "1",
+    driverFactory: () => driver,
+  });
+  expect(code).toBe(0);
+  expect(out).toContain("1 done, 0 failed");
+  const state = fold(readEvents(file()));
+  expect(state.status).toBe("finished");
+  expect(state.tasks.T1?.status).toBe("done");
+  expect(state.tasks.T2?.status).toBe("pending");
+});
