@@ -5,6 +5,7 @@ import { serve } from "@hono/node-server";
 import {
   findProgressFiles,
   fold,
+  parseTaskDetails,
   readEvents,
   readRegistry,
   registerRepo,
@@ -57,6 +58,45 @@ export function isLoopbackHost(host: string | undefined): boolean {
   if (!host) return false;
   const name = host.startsWith("[") ? host.slice(0, host.indexOf("]") + 1) : host.split(":")[0];
   return LOOPBACK.has((name ?? "").toLowerCase());
+}
+
+interface StageEntry {
+  stage: string;
+  attempt: number;
+  startedAt?: number;
+  endedAt?: number;
+  durationMs?: number;
+}
+
+/** Stage history of one task derived from STEP_STARTED/STEP_FINISHED events. */
+function stageHistory(events: TlcEvent[], taskId: string): StageEntry[] {
+  const out: StageEntry[] = [];
+  const counts = new Map<string, number>();
+  let attempt: number | undefined;
+  for (const e of events) {
+    const ts = typeof e.timestamp === "number" ? e.timestamp : undefined;
+    if (e.type === "CUSTOM" && e.name === "tlc.task") {
+      const v = (e.value ?? {}) as { id?: unknown; attempt?: unknown };
+      if (v.id === taskId && typeof v.attempt === "number") attempt = v.attempt;
+    } else if (e.type === "STEP_STARTED" || e.type === "STEP_FINISHED") {
+      const [tid, stage] = String(e.stepName ?? "").split(":");
+      if (tid !== taskId || !stage) continue;
+      if (e.type === "STEP_STARTED") {
+        const n = (counts.get(stage) ?? 0) + 1;
+        counts.set(stage, n);
+        const entry: StageEntry = { stage, attempt: attempt ?? n };
+        if (ts !== undefined) entry.startedAt = ts;
+        out.push(entry);
+      } else {
+        const open = [...out].reverse().find((x) => x.stage === stage && x.endedAt === undefined);
+        if (open && ts !== undefined) {
+          open.endedAt = ts;
+          if (open.startedAt !== undefined) open.durationMs = ts - open.startedAt;
+        }
+      }
+    }
+  }
+  return out;
 }
 
 const MIME: Record<string, string> = {
@@ -281,6 +321,44 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       events: store.eventsOf(id),
       otelUsage: store.sumUsage({ runId: id }),
     });
+  });
+
+  app.get("/api/runs/:id/tasks/:task", (c) => {
+    const id = c.req.param("id");
+    const taskId = c.req.param("task");
+    const run = store.getRun(id);
+    if (!run) return c.json({ error: "not found" }, 404);
+    const events = store.eventsOf(id);
+    const state = run.tasks[taskId] ?? null;
+    const stages = stageHistory(events, taskId);
+
+    const started = events.find((e) => e.type === "RUN_STARTED");
+    const input = (started?.input ?? {}) as { repoPath?: unknown; feature?: unknown };
+    const thread = run.threadId ?? "";
+    const feature =
+      run.feature ?? (typeof input.feature === "string" ? input.feature : thread.split("#")[1]);
+    let repoPath = typeof input.repoPath === "string" ? input.repoPath : undefined;
+    if (!repoPath) {
+      const name = thread.split("#")[0];
+      for (const r of readRegistry(env)) repos.add(r.path);
+      repoPath = [...repos].find((r) => basename(r) === name);
+    }
+    const out = (details: unknown, notice?: string) =>
+      c.json({ details, ...(notice ? { notice } : {}), state: { task: state, stages } });
+    if (!repoPath || !feature || /[\\/]|^\.\.?$/.test(feature)) {
+      return out(null, "repository path unknown for this run");
+    }
+    const dir = join(repoPath, ".specs", "features", feature);
+    const tasksFile = join(dir, "tasks.md");
+    if (!existsSync(tasksFile)) return out(null, `tasks.md not found at ${tasksFile}`);
+    try {
+      const specFile = join(dir, "spec.md");
+      const spec = existsSync(specFile) ? readFileSync(specFile, "utf8") : undefined;
+      const details = parseTaskDetails(readFileSync(tasksFile, "utf8"), spec)[taskId] ?? null;
+      return out(details, details ? undefined : `task ${taskId} not found in tasks.md`);
+    } catch (err) {
+      return out(null, `could not read plan: ${(err as Error).message}`);
+    }
   });
 
   app.get("/api/stream", (c) =>

@@ -1,0 +1,645 @@
+{
+  "T1": {
+    "title": "Crate scaffold, config, project",
+    "what": "Create `memo-cli` (workspace member) with clap skeleton for all subcommands (`login logout status doctor config recall remember note hook mcp statusline events install uninstall flush`), unimplemented ones exiting 2 with \"not implemented\". Implement `config.rs` (layering, `memo config show` with `client_id` shown, tokens never), `project.rs` (project name, branch, sanitiser, `default`).",
+    "where": "`Cargo.toml` (members), `crates/memo-cli/**`",
+    "dependsOn": [],
+    "requirements": [
+      {
+        "id": "CLI-04",
+        "text": "Config SHALL resolve in order: env (`MEMO_URL`, `MEMO_*`) > project `.memo.toml` (nearest ancestor of cwd) > `~/.config/memo/config.toml` > defaults; `memo config show` SHALL print the effective config with secrets redacted."
+      }
+    ],
+    "doneWhen": [
+      {
+        "text": "Unit: layering order env > project > user > default for every key group; nearest-ancestor `.memo.toml`; project name in git repo / subdir / non-git / unsanitisable → `default`; branch from `.git/HEAD` (ref and detached)",
+        "checked": true
+      },
+      {
+        "text": "`memo --help` lists all subcommands; Quick gate passes; clippy clean",
+        "checked": true
+      }
+    ],
+    "tests": "unit",
+    "gate": "quick",
+    "milestone": "P1"
+  },
+  "T2": {
+    "title": "Local state",
+    "what": "`state.rs` per Shared contracts: state dir (0700), session files, events log with rotation, health cache, write queue (enqueue with bounds 100 entries / 5 MiB dropping oldest and counting drops in `S/queue/.drops`, list oldest-first, remove, flock), atomic writes.",
+    "where": "`crates/memo-cli/src/state.rs`",
+    "dependsOn": [
+      "T1"
+    ],
+    "requirements": [
+      {
+        "id": "HOOK-08",
+        "text": "WHEN a remember fails THEN its payload SHALL be appended to the local write queue; every later hook SHALL first try to flush the queue (bounded to 1 s), oldest first; queue bound 100 entries / 5 MiB, dropping oldest and counting drops."
+      },
+      {
+        "id": "D-08",
+        "text": ""
+      }
+    ],
+    "doneWhen": [
+      {
+        "text": "Unit: session round trip; counters increment; events append + rotation at 1 MiB; queue bounds by count and bytes with drop counter; oldest-first order",
+        "checked": true
+      },
+      {
+        "text": "Integration: 8 threads/processes appending events and incrementing the same session concurrently lose no updates (use a per-session lock file)",
+        "checked": true
+      },
+      {
+        "text": "Quick + `cargo test -p memo-cli` pass",
+        "checked": true
+      }
+    ],
+    "tests": "unit, integration",
+    "gate": "full (no containers)",
+    "milestone": "P1"
+  },
+  "T3": {
+    "title": "Login, credentials, token",
+    "what": "`auth/` per DD-02/DD-08. `memo login [url]` (stores url into user config when given): fetch `<url>/.well-known/oauth-protected-resource/mcp` → `resource`, `authorization_servers[0]`; OIDC discovery `<issuer>/.well-known/openid-configuration` (fallback RFC 8414 `/.well-known/oauth-authorization-server`); client id from config else DCR (`registration_endpoint`, `token_endpoint_auth_method: none`, `redirect_uris: [\"http://127.0.0.1/callback\"]`, `grant_types: [authorization_code, refresh_token]`, `client_name: \"memo-cli\"`); loopback server on `127.0.0.1:0`, PKCE S256, `state` check, `resource` param, scope `openid offline_access` plus `scopes_supported` from the PRM if present; open browser (`open` crate) and always print the URL; exchange code; store `{refresh_token, client_id, issuer, token_endpoint, resource}` in keyring service `memo` user `<url origin>` with file fallback 0600. Token getter: `MEMO_TOKEN` wins; cached access token reused until 60 s before `exp` (decode JWT payload without verifying, only for `exp`); refresh grant otherwise; refresh failure → `AuthError::LoginNeeded`. `memo logout` clears keyring, file and cache.",
+    "where": "`crates/memo-cli/src/auth/*.rs`, `tests/login.rs`",
+    "dependsOn": [
+      "T2"
+    ],
+    "requirements": [
+      {
+        "id": "CLI-01",
+        "text": "WHEN `memo login` runs THEN it SHALL perform OIDC authorization code + PKCE (S256) with a loopback redirect on `127.0.0.1:<ephemeral port>`, open the browser (print the URL if no browser), and store the refresh token in the OS keyring, falling back to `$XDG_STATE_HOME/memo/credentials` with mode 0600."
+      },
+      {
+        "id": "CLI-02",
+        "text": "WHEN any command needs a token and the cached access token expires within 60 s THEN the CLI SHALL refresh it; IF refresh fails THEN it SHALL report state `login-needed` (no interactive prompt from hooks)."
+      },
+      {
+        "id": "CLI-03",
+        "text": "WHEN `MEMO_TOKEN` is set THEN the CLI SHALL use it as the bearer token and skip the keyring."
+      },
+      {
+        "id": "CLI-05",
+        "text": "WHEN `memo logout` runs THEN it SHALL delete stored credentials from keyring and file."
+      },
+      {
+        "id": "DD-02",
+        "text": ""
+      },
+      {
+        "id": "DD-08",
+        "text": ""
+      }
+    ],
+    "doneWhen": [
+      {
+        "text": "Integration vs an in-test fake AS (axum: PRM, discovery, DCR, authorize that redirects straight back with a code, token endpoint verifying PKCE verifier and `resource`): login without browser (test hook env `MEMO_LOGIN_NO_BROWSER=1` + a test client that follows the printed URL) stores credentials; second token call uses cache; expired cache refreshes; failing refresh → LoginNeeded; logout removes all; `MEMO_TOKEN` bypasses everything; wrong `state` rejected",
+        "checked": true
+      },
+      {
+        "text": "Credentials file mode 0600; tokens never appear in `hook.log` or stdout of `config show`",
+        "checked": true
+      },
+      {
+        "text": "Full gate (no containers) passes",
+        "checked": true
+      }
+    ],
+    "tests": "integration",
+    "gate": "full",
+    "milestone": "P1"
+  },
+  "T4": {
+    "title": "MCP client and manual commands",
+    "what": "`client.rs`: rmcp streamable-HTTP client to `<url>/mcp` with `Authorization: Bearer` and `X-Cognee-Agent`, `recall(query, top_k, search_type CHUNKS) -> Vec<Hit{layer, text, dataset_name}>`, `remember(text, dataset_name, layer \"agent\", self_improvement, background true)`, `health()` (`GET <url>/health`). Map 401 → LoginNeeded(reason `audience` if token present), connect/timeout → Offline; update `health.json` on every outcome; record events (`source: hook` by caller choice). Commands `memo recall <q> [--harness h] [--json]`, `memo remember <text>`, `memo note <text>` (NOTE-01; current project dataset, counts write).",
+    "where": "`crates/memo-cli/src/client.rs`, `src/main.rs`, `tests/it_client.rs`",
+    "dependsOn": [
+      "T3"
+    ],
+    "requirements": [
+      {
+        "id": "CLI-06",
+        "text": "Every REST call SHALL send `X-Cognee-Agent: <harness agent>` (D-06) when invoked for a harness, and SHALL never log tokens."
+      },
+      {
+        "id": "CLI-07",
+        "text": "`memo recall <query>` and `memo remember <text>` SHALL work standalone (same layer/dataset rules as hooks) for manual use and testing."
+      },
+      {
+        "id": "NOTE-01",
+        "text": "`memo note <text>` SHALL remember into the current project dataset/agent layer, counted as a write."
+      },
+      {
+        "id": "HOOK-07",
+        "text": "WHEN memo is unreachable or login is needed THEN the hook SHALL record that state for the indicator and inject nothing."
+      }
+    ],
+    "doneWhen": [
+      {
+        "text": "IT (`MEMO_IT=1`): start memo-server on the memo-testkit stack with `MCP_RESOURCE_URL` set (see `crates/memo-server/tests/mcp.rs` for setup), mint a token with the MCP audience, `MEMO_TOKEN=… memo remember \"A=1\" --harness codex` then `memo recall \"value of A\" --harness codex --json` returns a hit with layer `agent`; X-Cognee-Agent honoured (a different harness agent does not see it at agent layer)",
+        "checked": true
+      },
+      {
+        "text": "Unit/integration without containers: unreachable URL → state `offline` within timeout; 401 → `login-needed`",
+        "checked": true
+      },
+      {
+        "text": "Full gate passes",
+        "checked": true
+      }
+    ],
+    "tests": "integration",
+    "gate": "full",
+    "milestone": "P1"
+  },
+  "T5": {
+    "title": "Redaction, turns and capture builder",
+    "what": "`hook/capture.rs`: `redact(text)` (bearer/JWT `eyJ…\\.…\\.…`, `sk-[A-Za-z0-9_-]{16,}`, `ghp_`/`gho_`/`github_pat_`, `AKIA[0-9A-Z]{16}`, PEM private key blocks, `(password|passwd|secret|token|api[_-]?key)\\s*[=:]\\s*\\S+` → keep key, value `[REDACTED]`); strip `<memo-recall …>…</memo-recall>` blocks; `append_turn(session, role, text)`; `build_capture(session) -> Option<String>` from `turns[cursor..]` as `user: …` / `assistant: …` lines, newest kept within `max_bytes` (drop oldest whole turns; a single turn larger than cap is cut from its start at a char boundary), `None` when empty; advance cursor on enqueue.",
+    "where": "`crates/memo-cli/src/hook/capture.rs`",
+    "dependsOn": [
+      "T2"
+    ],
+    "requirements": [
+      {
+        "id": "CAPT-01",
+        "text": "The capture SHALL contain user prompts and final assistant text replies since the last successful capture of that session (cursor kept in local state), in order, labelled `user:` / `assistant:`."
+      },
+      {
+        "id": "CAPT-02",
+        "text": "Tool calls, tool results, thinking blocks and system/hook-injected text (including memo's own recall blocks) SHALL be excluded."
+      },
+      {
+        "id": "CAPT-03",
+        "text": "Text matching secret patterns (bearer/JWT tokens, `sk-…`/`ghp_…`/AWS keys, PEM private keys, `password=`/`secret=` assignments) SHALL be replaced with `[REDACTED]` before leaving the machine."
+      },
+      {
+        "id": "CAPT-04",
+        "text": "The capture SHALL be capped at 32 KiB, keeping the most recent content; empty captures SHALL not be sent."
+      },
+      {
+        "id": "CAPT-05",
+        "text": "Capture SHALL be built from hook payloads accumulated per session (prompt text, final assistant text), never from transcript files (DD-12)."
+      },
+      {
+        "id": "HOOK-10",
+        "text": "WHEN `turn-end` fires THEN memo SHALL append the redacted final assistant text to the session's turns (no network); WHEN `prompt` fires it SHALL append the redacted prompt likewise (DD-12)."
+      },
+      {
+        "id": "DD-12",
+        "text": ""
+      }
+    ],
+    "doneWhen": [
+      {
+        "text": "Unit: table of secret samples all redacted and non-secrets untouched; memo-recall blocks stripped; cap keeps newest; cursor prevents resend; empty → None; multibyte text never split mid-char",
+        "checked": true
+      },
+      {
+        "text": "Quick gate passes",
+        "checked": true
+      }
+    ],
+    "tests": "unit",
+    "gate": "quick",
+    "milestone": "P1"
+  },
+  "T6": {
+    "title": "Hook engine",
+    "what": "`hook/mod.rs` + `hook/recall.rs`: neutral event dispatch with fail-open (any error → log to `S/hook.log`, exit 0, no-op output) and a hard deadline (`recall.timeout_ms` + 500 ms wall). Behaviour per event:",
+    "where": "`crates/memo-cli/src/hook/{mod,recall}.rs`, `src/flush.rs`",
+    "dependsOn": [
+      "T4",
+      "T5"
+    ],
+    "requirements": [
+      {
+        "id": "HOOK-02",
+        "text": "WHEN `session-start` fires THEN memo SHALL recall with query `<project> <branch>` (top_k 8) and inject at most 4 KiB of context formatted as a fenced \"memo recall\" block listing each hit with its layer."
+      },
+      {
+        "id": "HOOK-03",
+        "text": "WHEN `prompt` fires with a prompt ≥ 20 chars that is not a slash command THEN memo SHALL recall with the prompt as query (Chunks, top_k 5) and inject at most 2 KiB; shorter prompts and slash commands SHALL inject nothing and make no call."
+      },
+      {
+        "id": "HOOK-04",
+        "text": "WHEN `pre-compact` or `session-end` fires THEN memo SHALL remember the capture (CAPT-*) into the agent layer, dataset = project name (D-07), with `self_improvement` per config."
+      },
+      {
+        "id": "HOOK-05",
+        "text": "WHEN `tool-used` fires for a memo MCP tool THEN memo SHALL count `recall` as a read and `remember`/`improve`/`forget` as writes, without calling the server."
+      },
+      {
+        "id": "HOOK-06",
+        "text": "Every hook SHALL exit 0 and emit a valid \"no-op\" native response on any error (fail open); recall SHALL time out after 2 s (configurable); total hook wall time SHALL stay under timeout + 500 ms."
+      },
+      {
+        "id": "HOOK-07",
+        "text": "WHEN memo is unreachable or login is needed THEN the hook SHALL record that state for the indicator and inject nothing."
+      },
+      {
+        "id": "HOOK-08",
+        "text": "WHEN a remember fails THEN its payload SHALL be appended to the local write queue; every later hook SHALL first try to flush the queue (bounded to 1 s), oldest first; queue bound 100 entries / 5 MiB, dropping oldest and counting drops."
+      },
+      {
+        "id": "HOOK-09",
+        "text": "Recall injection SHALL never include hits whose text came from the current session's own capture within the last 60 s (avoid echo) — de-duplicated by text hash."
+      },
+      {
+        "id": "HOOK-10",
+        "text": "WHEN `turn-end` fires THEN memo SHALL append the redacted final assistant text to the session's turns (no network); WHEN `prompt` fires it SHALL append the redacted prompt likewise (DD-12)."
+      },
+      {
+        "id": "D-10",
+        "text": ""
+      }
+    ],
+    "doneWhen": [
+      {
+        "text": "Unit: injection formatting/caps/`(+N more)`; skip rules for short prompt and slash command (no client call — use a client trait + fake); echo filter; tool-name matching table",
+        "checked": true
+      },
+      {
+        "text": "Integration (fake client): server down → every event exits 0 under 2.5 s, capture lands in queue, `memo flush` later delivers it (fake server) and empties queue; counters and events recorded",
+        "checked": true
+      },
+      {
+        "text": "Full gate passes",
+        "checked": true
+      }
+    ],
+    "tests": "unit, integration",
+    "gate": "full",
+    "milestone": "P1"
+  },
+  "T7": {
+    "title": "Harness adapters (stdin/stdout)",
+    "what": "`adapters/{claude_code,codex,gemini,opencode}.rs`: `parse(native_event_name, stdin) -> NeutralEvent` and `render(neutral, context) -> stdout`, per design tables. `memo hook <native-or-neutral-event> --harness <h>`: accept the native event name (e.g. `UserPromptSubmit`, `BeforeAgent`, `Stop`) or the neutral name. Outputs: Claude/Codex/Gemini injection = `{\"hookSpecificOutput\":{\"hookEventName\":<native>,\"additionalContext\":…}}`, no-op = `{}`; Gemini stdout must be JSON only; Codex `Stop` must output JSON; OpenCode = neutral `{\"context\":…}`. Field mapping: Claude/Codex `prompt`, `last_assistant_message`, `tool_name`; Gemini `prompt`, `prompt_response`, `tool_name`. Each adapter exposes `events() -> &[(Neutral, &'static str native)]` (DD-10).",
+    "where": "`crates/memo-cli/src/adapters/*.rs`, `tests/fixtures/<harness>/*.json`, `tests/adapters.rs`",
+    "dependsOn": [
+      "T6"
+    ],
+    "requirements": [
+      {
+        "id": "HOOK-01",
+        "text": "`memo hook <event> --harness <h>` SHALL read the harness's native hook JSON on stdin, normalise it to a neutral event (`session-start`, `prompt`, `tool-used`, `pre-compact`, `session-end`), and write the harness's native response on stdout."
+      },
+      {
+        "id": "ADAPT-05",
+        "text": "A capability matrix (harness × neutral event → native event or \"unsupported\") SHALL live in `integrations/README.md` and be the single source used by the installer."
+      }
+    ],
+    "doneWhen": [
+      {
+        "text": "Fixture per harness × supported event (stdin per the field lists in design.md) → expected neutral event; render goldens for inject and no-op",
+        "checked": true
+      },
+      {
+        "text": "Malformed stdin → exit 0 + no-op output + `hook.log` line",
+        "checked": true
+      },
+      {
+        "text": "Quick + full (no containers) gates pass",
+        "checked": true
+      }
+    ],
+    "tests": "unit, integration",
+    "gate": "full",
+    "milestone": "P1"
+  },
+  "T8": {
+    "title": "`memo mcp` stdio proxy",
+    "what": "`proxy.rs`: rmcp stdio server exposing exactly the tools memo-server exposes (`remember`, `recall`, `forget`, `improve`, `cognify_status`), schemas fetched from the remote `list_tools` at startup (fallback: static copy if offline, tool calls then return a tool error \"memo offline: <reason>\"), each call forwarded to `/mcp` with the harness agent header; counts reads/writes into the session file keyed by `--session` if given else `<harness>-mcp-<pid start date>`, events `source: mcp`. Since the harness session id is unknown to the proxy, also append the event with `session: null`; `memo events --session` (T9) attributes `session: null` mcp events to the most recently updated session of that harness.",
+    "where": "`crates/memo-cli/src/proxy.rs`, `tests/it_proxy.rs`",
+    "dependsOn": [
+      "T4"
+    ],
+    "requirements": [
+      {
+        "id": "DD-03",
+        "text": ""
+      },
+      {
+        "id": "INST-05",
+        "text": "The MCP client name each harness sends SHALL sanitize to the same agent name the hooks use (D-06); IF a harness's client name differs THEN the installer SHALL configure an `X-Cognee-Agent` header on the MCP entry where the harness supports headers."
+      },
+      {
+        "id": "IND-03",
+        "text": "Counters SHALL be per Claude Code session id (D-08) and include hook recalls/remembers and memo MCP tool calls."
+      }
+    ],
+    "doneWhen": [
+      {
+        "text": "IT: spawn `memo mcp --harness codex` as child, rmcp client over its stdio lists 5 tools, `remember` then `recall` round-trip through the test memo-server; events recorded with `source: mcp`",
+        "checked": true
+      },
+      {
+        "text": "Offline: tools listed, calls return tool error, process does not exit",
+        "checked": true
+      },
+      {
+        "text": "Full gate passes",
+        "checked": true
+      }
+    ],
+    "tests": "integration",
+    "gate": "full",
+    "milestone": "Wave 5"
+  },
+  "T9": {
+    "title": "statusline, events, status, doctor",
+    "what": "`memo statusline [--wrap <cmd>] [--color auto|always|never]` (IND-01/02/04/05): stdin Claude status JSON (`session_id`, `cwd`), output per IND-01 using counts from `claude-code-<session_id>` (+ `session: null` mcp events attributed per T8), health probe at most once per 30 s with 300 ms budget (else cached), `⧗<n>` queue; `--wrap` runs `sh -c <cmd>` with the same stdin and prints its stdout then the memo segment on the same last line separated by `│`. `memo events [--json] [--session id] [--harness h] [--limit 20]` → `{ \"state\", \"reason\", \"url\", \"agent\", \"dataset\", \"reads\", \"writes\", \"queued\", \"drops\", \"events\": [...] }` (PANEL-02 contract). `memo status [--json]` (DIAG-01). `memo doctor` (DIAG-02) with one line per check `ok|warn|fail <check>: <detail>` and a fix hint.",
+    "where": "`crates/memo-cli/src/{statusline,events,status,doctor}.rs`",
+    "dependsOn": [
+      "T8"
+    ],
+    "requirements": [
+      {
+        "id": "IND-01",
+        "text": "`memo statusline` SHALL read Claude Code's status line JSON on stdin (session id) and print one line: `● memo ↓<reads> ↑<writes>` when connected, `○ memo offline`, `○ memo login` when login is needed, plus `⧗<n>` when the write queue is non-empty."
+      },
+      {
+        "id": "IND-02",
+        "text": "Connection state SHALL come from the last hook/statusline probe result in local state; `memo statusline` SHALL make at most one `/health` probe per 30 s (cached) and SHALL return within 300 ms."
+      },
+      {
+        "id": "IND-03",
+        "text": "Counters SHALL be per Claude Code session id (D-08) and include hook recalls/remembers and memo MCP tool calls."
+      },
+      {
+        "id": "IND-04",
+        "text": "`memo statusline --wrap '<cmd>'` SHALL run an existing status line command (e.g. usage-bar) with the same stdin and print its output followed by the memo segment, so the user's current status line is kept; the installer SHALL configure this wrap when a status line already exists."
+      },
+      {
+        "id": "IND-05",
+        "text": "Colors SHALL use ANSI only when stdout is a TTY or `--color=always`; `NO_COLOR` disables them."
+      },
+      {
+        "id": "PANEL-02",
+        "text": "The panel SHALL read the same local event log as the status line (`memo events --json --session <id>`), never calling memo-server itself."
+      },
+      {
+        "id": "DIAG-01",
+        "text": "`memo status [--json]` SHALL show URL, login state (user, expiry), health, agent per harness, queue size/drops, installed harnesses."
+      },
+      {
+        "id": "DIAG-02",
+        "text": "`memo doctor` SHALL check binary on PATH, config, login, server health, MCP audience reachability (`/.well-known/oauth-protected-resource/mcp`), and each installed harness's config, printing fixes."
+      }
+    ],
+    "doneWhen": [
+      {
+        "text": "Unit/golden: statusline strings for connected/offline/login/queue, NO_COLOR, wrap concatenation; events JSON shape",
+        "checked": true
+      },
+      {
+        "text": "Timing test: statusline with unreachable server returns < 300 ms",
+        "checked": true
+      },
+      {
+        "text": "Full gate passes",
+        "checked": true
+      }
+    ],
+    "tests": "unit, integration",
+    "gate": "full",
+    "milestone": "P1"
+  },
+  "T10": {
+    "title": "Installer core + Codex",
+    "what": "`install/mod.rs`: `memo install <harness> [--dry-run] [--remote] [--statusline] [--bin <path>]`, `memo uninstall <harness>`, backups `<file>.memo-bak.<unix_ts>` before first change, unified diff output for `--dry-run` (`similar` crate), idempotency, absolute memo path (`std::env::current_exe` canonicalised, or `--bin`). Codex: `~/.codex/config.toml` (respect `CODEX_HOME`) via `toml_edit`: `[mcp_servers.memo]` stdio (`command`, `args = [\"mcp\",\"--harness\",\"codex\"]`) or with `--remote` `url = \"<url>/mcp\"` + `bearer_token_env_var = \"MEMO_TOKEN\"` + `http_headers = { \"X-Cognee-Agent\" = \"codex\" }`; hooks `[[hooks.<Event>]]` with `[[hooks.<Event>.hooks]] type=\"command\" command=\"<bin> hook <Event> --harness codex\" timeout=<s>`; identify memo entries on uninstall by command prefix `<bin> hook` / table name `mcp_servers.memo`. Print the `/hooks` trust reminder. `memo install --matrix` prints the capability matrix markdown from adapters' `events()`.",
+    "where": "`crates/memo-cli/src/install/{mod,codex}.rs`, `tests/install_codex.rs`, goldens",
+    "dependsOn": [
+      "T7"
+    ],
+    "requirements": [
+      {
+        "id": "INST-01",
+        "text": "`memo install <claude-code|opencode|gemini-cli|codex>` SHALL register the memo MCP server (`<MEMO_URL>/mcp`) and the hooks for every neutral event the harness supports, in the harness's user-level config."
+      },
+      {
+        "id": "INST-02",
+        "text": "Install SHALL be idempotent (second run = no diff), SHALL back up each file it changes to `<file>.memo-bak.<timestamp>` before the first change, and SHALL preserve unrelated user config (comments preserved where the format allows)."
+      },
+      {
+        "id": "INST-03",
+        "text": "`memo uninstall <harness>` SHALL remove exactly the entries memo added, leaving other config untouched."
+      },
+      {
+        "id": "INST-04",
+        "text": "`memo install --dry-run` SHALL print the diff without writing."
+      },
+      {
+        "id": "ADAPT-04",
+        "text": ""
+      },
+      {
+        "id": "ADAPT-05",
+        "text": "A capability matrix (harness × neutral event → native event or \"unsupported\") SHALL live in `integrations/README.md` and be the single source used by the installer."
+      }
+    ],
+    "doneWhen": [
+      {
+        "text": "Temp `HOME`/`CODEX_HOME`: install into empty and into a pre-existing config with comments and unrelated tables → matches golden; second install = no change; uninstall → byte-identical to original; `--dry-run` writes nothing",
+        "checked": true
+      },
+      {
+        "text": "Full gate passes",
+        "checked": true
+      }
+    ],
+    "tests": "integration (golden)",
+    "gate": "full",
+    "milestone": "P1"
+  },
+  "T11": {
+    "title": "Installers: Claude Code, Gemini CLI, OpenCode",
+    "what": "",
+    "where": "`crates/memo-cli/src/install/{claude_code,gemini,opencode}.rs`, tests + goldens",
+    "dependsOn": [
+      "T10"
+    ],
+    "requirements": [
+      {
+        "id": "INST-01",
+        "text": "`memo install <claude-code|opencode|gemini-cli|codex>` SHALL register the memo MCP server (`<MEMO_URL>/mcp`) and the hooks for every neutral event the harness supports, in the harness's user-level config."
+      },
+      {
+        "id": "INST-02",
+        "text": "Install SHALL be idempotent (second run = no diff), SHALL back up each file it changes to `<file>.memo-bak.<timestamp>` before the first change, and SHALL preserve unrelated user config (comments preserved where the format allows)."
+      },
+      {
+        "id": "INST-03",
+        "text": "`memo uninstall <harness>` SHALL remove exactly the entries memo added, leaving other config untouched."
+      },
+      {
+        "id": "INST-04",
+        "text": "`memo install --dry-run` SHALL print the diff without writing."
+      },
+      {
+        "id": "INST-05",
+        "text": "The MCP client name each harness sends SHALL sanitize to the same agent name the hooks use (D-06); IF a harness's client name differs THEN the installer SHALL configure an `X-Cognee-Agent` header on the MCP entry where the harness supports headers."
+      },
+      {
+        "id": "ADAPT-01",
+        "text": ""
+      },
+      {
+        "id": "ADAPT-02",
+        "text": ""
+      },
+      {
+        "id": "ADAPT-03",
+        "text": ""
+      },
+      {
+        "id": "IND-04",
+        "text": "`memo statusline --wrap '<cmd>'` SHALL run an existing status line command (e.g. usage-bar) with the same stdin and print its output followed by the memo segment, so the user's current status line is kept; the installer SHALL configure this wrap when a status line already exists."
+      }
+    ],
+    "doneWhen": [
+      {
+        "text": "Golden tests in temp HOME with `PATH` lacking `claude`/`gemini` (file-edit paths) and with fake `claude`/`gemini` scripts on PATH recording argv",
+        "checked": true
+      },
+      {
+        "text": "Idempotent; uninstall restores bytes; full gate passes",
+        "checked": true
+      }
+    ],
+    "tests": "integration (golden)",
+    "gate": "full",
+    "milestone": "P1"
+  },
+  "T12": {
+    "title": "Claude Code plugin + marketplace",
+    "what": "`.claude-plugin/marketplace.json` at repo root (`name: \"memo\"`, owner, plugins `memo` → `./integrations/claude-code/memo`, `memo-panel` → `./integrations/claude-code/memo-panel`). Plugin `memo`: `.claude-plugin/plugin.json` with `userConfig.memo_bin` (string, default `memo`), `hooks/hooks.json` for SessionStart, UserPromptSubmit, Stop, PostToolUse (matcher `mcp__memo__.*`), PreCompact, SessionEnd each `\"${CLAUDE_PLUGIN_OPTION_MEMO_BIN:-memo}\" hook <NativeEvent> --harness claude-code` (timeouts: SessionStart/UserPromptSubmit 5, others 3), `.mcp.json` stdio memo server (`command` `${user_config.memo_bin}`, args `mcp --harness claude-code`), README.",
+    "where": "`.claude-plugin/marketplace.json`, `integrations/claude-code/memo/**`",
+    "dependsOn": [
+      "T11"
+    ],
+    "requirements": [
+      {
+        "id": "ADAPT-01",
+        "text": ""
+      }
+    ],
+    "doneWhen": [
+      {
+        "text": "`claude plugin validate integrations/claude-code/memo` passes; `claude plugin validate .` passes for the marketplace",
+        "checked": true
+      },
+      {
+        "text": "Manual smoke (orchestrator): `claude --plugin-dir integrations/claude-code/memo -p \"hi\"` runs hooks without error with server unreachable (fail open)",
+        "checked": true
+      }
+    ],
+    "tests": "validation",
+    "gate": "build",
+    "milestone": "Wave 9"
+  },
+  "T13": {
+    "title": "Claude Code mod `memo-panel`",
+    "what": "Mod plugin `integrations/claude-code/memo-panel/` (`.claude-plugin/plugin.json` with `userConfig.memo_bin`, `\"types\": \"./types/index.d.ts\"`; `hooks/hooks.json` `{ \"modules\": [\"./register.tsx\"] }`; `hooks/register.tsx`; `types/index.d.ts`). Behaviour: on `session.start` register command `/memo` (opens pane) and start `$.clock.every(3000, refresh)`; refresh runs `$.process.run([memo_bin, \"events\", \"--json\", \"--harness\", \"claude-code\", \"--session\", <session id>, \"--limit\", \"20\"], { timeoutMs: 2000 })`, stores the parsed object in an atom, sets `$.ui.status(\"● memo ↓r ↑w\")` / `\"○ memo offline\"` / `\"○ memo login\"` (+ ` ⧗n`); also refresh right after any `tool.call` whose tool starts with `mcp__memo__`. `AbovePrompt` band only when state ≠ connected: reason + `run: memo login` / `memo doctor`. Pane `memo` (opened by `/memo`, not unasked): url, agent, dataset, counters, last 20 events (time, ↓/↑, source, summary, hits/layers, status). Never calls memo-server.",
+    "where": "`integrations/claude-code/memo-panel/**`",
+    "dependsOn": [
+      "T12"
+    ],
+    "requirements": [
+      {
+        "id": "PANEL-01",
+        "text": "A Claude Code mod in the plugin SHALL show a live panel with connection state, server URL, agent, dataset, and the last 20 events (time, ↓/↑, source hook|mcp, query or first 80 chars, hit count/layers, status)."
+      },
+      {
+        "id": "PANEL-02",
+        "text": "The panel SHALL read the same local event log as the status line (`memo events --json --session <id>`), never calling memo-server itself."
+      },
+      {
+        "id": "PANEL-03",
+        "text": "WHEN state is offline or login-needed THEN the panel SHALL show the reason and the fix command (`memo login`)."
+      },
+      {
+        "id": "IND-01",
+        "text": "`memo statusline` SHALL read Claude Code's status line JSON on stdin (session id) and print one line: `● memo ↓<reads> ↑<writes>` when connected, `○ memo offline`, `○ memo login` when login is needed, plus `⧗<n>` when the write queue is non-empty."
+      },
+      {
+        "id": "DD-04",
+        "text": ""
+      },
+      {
+        "id": "DD-05",
+        "text": ""
+      }
+    ],
+    "doneWhen": [
+      {
+        "text": "`claude plugin validate` passes; `tsc -p` type-checks; `claude plugin test` with a test that stubs `$.process.run` output (connected and offline) asserts status text and pane rows — tsc not installed; TS checked via `claude plugin validate`",
+        "checked": true
+      },
+      {
+        "text": "Gate: build",
+        "checked": true
+      }
+    ],
+    "tests": "mod test",
+    "gate": "build",
+    "milestone": "P2"
+  },
+  "T14": {
+    "title": "OpenCode plugin, Gemini extension, Codex files, matrix README",
+    "what": "",
+    "where": "`integrations/**`, `crates/memo-cli/tests/matrix.rs`",
+    "dependsOn": [
+      "T13"
+    ],
+    "requirements": [
+      {
+        "id": "ADAPT-02",
+        "text": ""
+      },
+      {
+        "id": "ADAPT-03",
+        "text": ""
+      },
+      {
+        "id": "ADAPT-04",
+        "text": ""
+      },
+      {
+        "id": "ADAPT-05",
+        "text": "A capability matrix (harness × neutral event → native event or \"unsupported\") SHALL live in `integrations/README.md` and be the single source used by the installer."
+      }
+    ],
+    "doneWhen": [
+      {
+        "text": "Matrix drift test passes; JSON files parse; OpenCode plugin typechecks if `tsc`/`bun` available (else note in README as untested)",
+        "checked": true
+      },
+      {
+        "text": "Full gate passes",
+        "checked": true
+      }
+    ],
+    "tests": "unit (drift)",
+    "gate": "full",
+    "milestone": "Wave 11"
+  },
+  "T15": {
+    "title": "End-to-end and docs",
+    "what": "`tests/it_e2e.rs` (`MEMO_IT=1`): with the test stack + token, for each harness run the native fixture sequence through the binary: session-start → prompt \"remember that the deploy port is 8443\" → turn-end → session-end → `memo flush` (wait for cognify) → new session-start + prompt \"what is the deploy port?\" injects a block containing `8443`. Server stopped: every hook returns < 2.5 s, capture queued, delivered after restart. `memo statusline` counts match operations. Update root `README.md` (memo CLI section: login, install per harness, indicator, privacy of capture), `.specs` traceability.",
+    "where": "`crates/memo-cli/tests/it_e2e.rs`, `README.md`",
+    "dependsOn": [
+      "T14"
+    ],
+    "requirements": [],
+    "doneWhen": [
+      {
+        "text": "Build gate passes (fmt, clippy -D warnings, full workspace tests with `MEMO_IT=1`)",
+        "checked": true
+      }
+    ],
+    "tests": "integration",
+    "gate": "build",
+    "milestone": "Wave 12"
+  }
+}

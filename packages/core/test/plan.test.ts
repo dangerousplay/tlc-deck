@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
-import { PlanError, parsePlan } from "../src/plan.js";
+import { PlanError, parsePlan, parseTaskDetails } from "../src/plan.js";
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), "../../../fixtures/plans");
 const read = (p: string) => readFileSync(join(dir, p), "utf8");
@@ -56,4 +56,32 @@ test("cycle names the tasks", () => {
 
 test("missing dependency is an error", () => {
   expect(() => parsePlan("### T1: a\n**Depends on**: T9\n")).toThrow(/missing task T9/);
+});
+
+test("parseTaskDetails: memo fixture golden, requirement text from spec", async () => {
+  const details = parseTaskDetails(
+    read("memo-harness-integration/tasks.md"),
+    read("memo-harness-integration/spec.md"),
+  );
+  expect(Object.keys(details)).toHaveLength(15);
+  const t3 = details.T3;
+  expect(t3?.title).toBe("Login, credentials, token");
+  expect(t3?.dependsOn).toEqual(["T2"]);
+  expect(t3?.gate).toBe("full");
+  expect(t3?.tests).toBe("integration");
+  expect(t3?.doneWhen).toHaveLength(3);
+  expect(t3?.doneWhen.every((d) => d.checked)).toBe(true);
+  expect(t3?.requirements.map((r) => r.id)).toEqual([
+    "CLI-01",
+    "CLI-02",
+    "CLI-03",
+    "CLI-05",
+    "DD-02",
+    "DD-08",
+  ]);
+  expect(t3?.requirements[0]?.text).toMatch(/^WHEN `memo login` runs/);
+  expect(t3?.requirements[4]?.text).toBe("");
+  await expect(`${JSON.stringify(details, null, 2)}\n`).toMatchFileSnapshot(
+    join(dir, "memo-harness-integration/expected-details.json"),
+  );
 });

@@ -1,12 +1,21 @@
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { appendEvent, type NewEvent } from "@tlc-deck/core";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { name, type RunningServer, startServer } from "../src/index.js";
 
 let dir: string;
+const fixtures = join(dirname(fileURLToPath(import.meta.url)), "../../../fixtures");
 let repo: string;
 let file: string;
 const servers: RunningServer[] = [];
@@ -31,13 +40,14 @@ const ev = (type: string, runId: string, extra: Record<string, unknown> = {}): N
     metadata: { v: 1, seq: 0, runId, threadId: "repo#f", harness: "t", driver: "t", source: "t" },
   }) as NewEvent;
 
-async function boot() {
+async function boot(now?: () => number) {
   const s = await startServer({
     port: 0,
     stateDir: join(dir, "state"),
     env: { XDG_STATE_HOME: join(dir, "xdg"), TLC_STATE_DIR: join(dir, "state") },
     repos: [repo],
     webDist: join(dir, "nope"),
+    ...(now ? { now } : {}),
     pollMs: 50,
     scanMs: 100,
     heartbeatMs: 200,
@@ -200,4 +210,33 @@ test("serves placeholder when web dist is missing, real files and SPA fallback o
     "<html>spa</html>",
   );
   appendFileSync(join(dir, "unused"), "");
+});
+
+test("GET /api/runs/:id/tasks/:task: notice when plan missing, details + stage history from golden run", async () => {
+  const feat = join(repo, ".specs", "features", "golden");
+  mkdirSync(feat, { recursive: true });
+  copyFileSync(join(fixtures, "runs", "golden-15.ndjson"), join(feat, "progress.ndjson"));
+  const s = await boot(() => 1763200100000);
+  const url = `${s.url}/api/runs/tlc_01JGOLDEN/tasks/T1`;
+  type Body = {
+    details: { title: string; gate: string } | null;
+    notice?: string;
+    state: {
+      task: { id: string } | null;
+      stages: { stage: string; attempt: number; durationMs?: number }[];
+    };
+  };
+  const missing = (await (await fetch(url)).json()) as Body;
+  expect(missing.details).toBeNull();
+  expect(missing.notice).toMatch(/tasks\.md not found/);
+  expect(missing.state.task?.id).toBe("T1");
+  expect(missing.state.stages.map((x) => x.stage)).toEqual(["implement", "verify"]);
+  expect(missing.state.stages[0]).toMatchObject({ attempt: 1, durationMs: 3000 });
+
+  copyFileSync(join(fixtures, "plans/memo-harness-integration/tasks.md"), join(feat, "tasks.md"));
+  copyFileSync(join(fixtures, "plans/memo-harness-integration/spec.md"), join(feat, "spec.md"));
+  const ok = (await (await fetch(url)).json()) as Body;
+  expect(ok.notice).toBeUndefined();
+  expect(ok.details?.title).toBe("Crate scaffold, config, project");
+  expect((await fetch(`${s.url}/api/runs/none/tasks/T1`)).status).toBe(404);
 });

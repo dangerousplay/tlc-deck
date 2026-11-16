@@ -71,7 +71,7 @@ function isDone(block: string): boolean {
   return boxes.length > 0 && boxes.every((b) => b[1] !== " ");
 }
 
-export function parsePlan(tasksMd: string, specMd?: string): Plan {
+function splitBlocks(tasksMd: string): { head: RegExpExecArray; text: string }[] {
   const lines = tasksMd.split(/\r?\n/);
   const blocks: { head: RegExpExecArray; text: string }[] = [];
   let cur: { head: RegExpExecArray; lines: string[] } | null = null;
@@ -89,7 +89,11 @@ export function parsePlan(tasksMd: string, specMd?: string): Plan {
     } else if (cur) cur.lines.push(line);
   }
   flush();
+  return blocks;
+}
 
+export function parsePlan(tasksMd: string, specMd?: string): Plan {
+  const blocks = splitBlocks(tasksMd);
   const prio = specMd ? priorityMap(specMd) : new Map<string, string>();
   const ids = new Set(blocks.map((b) => b.head[1] as string));
   const raw = blocks.map((b) => {
@@ -164,4 +168,73 @@ export function parsePlan(tasksMd: string, specMd?: string): Plan {
     tasks: tasks.filter((t) => t.milestone === name).map((t) => t.id),
   }));
   return { tasks, milestones };
+}
+
+export interface TaskDetails {
+  title: string;
+  what: string;
+  where: string;
+  dependsOn: string[];
+  requirements: { id: string; text: string }[];
+  doneWhen: { text: string; checked: boolean }[];
+  tests: string;
+  gate: string;
+  milestone: string;
+}
+
+/** requirement id -> acceptance-criteria text from spec.md. */
+function criteriaMap(spec: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const line of spec.split(/\r?\n/)) {
+    const m = /^\s*(?:\d+\.\s*|[-*]\s*)?([A-Z][A-Za-z]*-\d+):\s*(.+?)\s*$/.exec(line);
+    if (m?.[1] && !map.has(m[1])) map.set(m[1], m[2] ?? "");
+  }
+  return map;
+}
+
+/** Value of an inline `**Name**: value` (value ends at the next ` · ` / `|` separator or end of line). */
+function inlineField(block: string, name: string): string {
+  const m = new RegExp(`\\*\\*${name}\\*\\*:[ \\t]*(.*)$`, "mi").exec(block);
+  if (!m) return "";
+  return (m[1] ?? "").split(/\s+[·|]\s+\*\*/)[0]?.trim() ?? "";
+}
+
+export function parseTaskDetails(tasksMd: string, specMd?: string): Record<string, TaskDetails> {
+  const plan = parsePlan(tasksMd, specMd);
+  const milestones = new Map(plan.tasks.map((t) => [t.id, t.milestone]));
+  const criteria = specMd ? criteriaMap(specMd) : new Map<string, string>();
+  const out: Record<string, TaskDetails> = {};
+  for (const b of splitBlocks(tasksMd)) {
+    const id = b.head[1] as string;
+    const title = (b.head[2] as string).replace(/\s*\[P\]\s*/g, " ").trim();
+    const dependsOn = [
+      ...new Set(
+        (field(b.text, "Depends on") ?? "").replace(/\([^)]*\)/g, "").match(/\bT\d+\b/g) ?? [],
+      ),
+    ];
+    const reqField = field(b.text, "Requirement") ?? "";
+    const requirements = [...new Set(expandIds(reqField))].map((rid) => ({
+      id: rid,
+      text: criteria.get(rid) ?? "",
+    }));
+    const doneWhen: { text: string; checked: boolean }[] = [];
+    const idx = b.text.search(/^\*\*Done when\*\*/im);
+    if (idx >= 0) {
+      for (const m of b.text.slice(idx).matchAll(/^\s*[-*]\s*\[([ xX])\]\s*(.*)$/gm)) {
+        doneWhen.push({ text: (m[2] ?? "").trim(), checked: m[1] !== " " });
+      }
+    }
+    out[id] = {
+      title,
+      what: field(b.text, "What") ?? "",
+      where: field(b.text, "Where") ?? "",
+      dependsOn,
+      requirements,
+      doneWhen,
+      tests: inlineField(b.text, "Tests"),
+      gate: inlineField(b.text, "Gate"),
+      milestone: milestones.get(id) ?? "",
+    };
+  }
+  return out;
 }

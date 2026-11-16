@@ -137,14 +137,14 @@ const start = cmds => ['Start:', ...cmds]
 const end = cmds => ['End:', ...cmds]
 
 phase('Load')
-const loadInput = { tasksPath: TASKS_PATH, harness: 'claude-code', ...(a.only ? { only: a.only } : {}), ...(a.roles ? { roles: a.roles } : {}) }
+const loadInput = { tasksPath: TASKS_PATH, harness: 'claude-code', ...(REPO ? { repoPath: REPO } : {}), ...(a.only ? { only: a.only } : {}), ...(a.roles ? { roles: a.roles } : {}) }
 const parsed = await ag(
   `Read ${TASKS_PATH}. List every task with its id, title, dependencies (task ids), whether it is marked [P] (parallel-safe), and whether it is already complete. Do not summarize task bodies.
 If the \`tlc\` command is on PATH, get the task list from \`tlc plan --feature ${FEATURE} --json\` instead of parsing the file by hand (dependsOn -> depends_on; done flag as given); otherwise parse the file as described.
 Also return the verbatim text of these files if they exist (empty string if not): ".specs/tlc-execute.json" (relative to the repo root) as project_config, and "~/.claude/tlc-execute.json" as user_config.
 
 Progress reporting (only if \`tlc\` is on PATH; otherwise skip and return run_id as an empty string; never let a failure change your result):
-1. Start a run: \`tlc emit --start '{"input":${q(loadInput)}}' --feature ${FEATURE} --harness claude-code --driver workflow --source orchestrator\`. It prints the run id; return it as run_id. Before running it, inspect your shell environment (\`env\`) and add an "env" object to the input recording variables that may identify this workflow run or session: name matching CLAUDE_*, WORKFLOW*, or containing RUN_ID / SESSION / AGENT. Give the value for names starting with CLAUDE_ or WORKFLOW; for every other matching name give only the name (value null). Never record credentials or tokens.
+1. Start a run: \`tlc emit --start '{"input":${q(loadInput)}}' --feature ${FEATURE} --harness claude-code --driver workflow --source orchestrator\`. It prints the run id; return it as run_id. If the input has no "repoPath", add "repoPath" with the absolute path of the repository root (\`git rev-parse --show-toplevel\`, else the cwd). Before running it, inspect your shell environment (\`env\`) and add an "env" object to the input recording variables that may identify this workflow run or session: name matching CLAUDE_*, WORKFLOW*, or containing RUN_ID / SESSION / AGENT. Give the value for names starting with CLAUDE_ or WORKFLOW; for every other matching name give only the name (value null). Never record credentials or tokens.
 2. Emit the plan: \`tlc emit CUSTOM '{"value": <the JSON printed by tlc plan --json, verbatim>}' --run <run_id> --feature ${FEATURE} --harness claude-code --driver workflow --source orchestrator --name tlc.plan\`.`,
   opts('orchestrator', { label: 'parse tasks.md', phase: 'Load', schema: TASK_LIST }),
 )

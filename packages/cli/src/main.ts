@@ -219,6 +219,7 @@ async function cmdEmit(
         tasksPath: join(".specs", "features", feature, "tasks.md"),
         roles: config.roles,
         harness,
+        repoPath: resolve(repo),
         ...((body.input as object | undefined) ?? body),
       },
     };

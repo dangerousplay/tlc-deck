@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import {
   appendEvent,
   foldRuns,
@@ -185,6 +185,7 @@ export async function runPlan(opts: RunOptions): Promise<RunResult> {
       tasksPath: join(".specs", "features", feature, "tasks.md"),
       roles: config.roles,
       harness: defaultHarness,
+      repoPath: resolve(repo),
       ...(only ? { only: [...only] } : {}),
     },
   });
