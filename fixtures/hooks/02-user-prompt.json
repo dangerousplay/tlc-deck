@@ -1,0 +1,6 @@
+{
+  "hook_event_name": "UserPromptSubmit",
+  "session_id": "sess-1",
+  "cwd": "__CWD__",
+  "prompt": "Implement the thing and keep going until it works"
+}

@@ -1,0 +1,7 @@
+{
+  "hook_event_name": "SubagentStop",
+  "session_id": "sess-1",
+  "cwd": "__CWD__",
+  "agent_id": "agent-a",
+  "agent_type": "Explore"
+}

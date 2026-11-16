@@ -47,7 +47,9 @@ const usage = `usage: tlc <command> [options]
   emit   --start [json] [--feature f]            print a new run id
   status [--feature f] [--run id] [--json]
   watch  [--feature f] [--run id]
-  serve  [--port 7317] [--repo path]...
+  serve  [--port 7317] [--repo path]... [--no-content]
+  install   claude-code [--hooks] [--workflow] [--panel] [--dry-run]
+  uninstall claude-code [--hooks] [--workflow] [--panel] [--dry-run]
   run    [--feature f] [--harness h] [--only T1,T2] [--retries n] [--no-commit] [--resume] [--concurrency n]
   --version`;
 
@@ -65,6 +67,11 @@ const OPTIONS = {
   retries: { type: "string" },
   concurrency: { type: "string" },
   "no-commit": { type: "boolean" },
+  "no-content": { type: "boolean" },
+  hooks: { type: "boolean" },
+  workflow: { type: "boolean" },
+  panel: { type: "boolean" },
+  "dry-run": { type: "boolean" },
   resume: { type: "boolean" },
   repo: { type: "string", multiple: true },
   help: { type: "boolean", short: "h" },
@@ -280,8 +287,27 @@ export async function run(argv: string[], io: Io): Promise<number> {
       (values.help ? io.stdout : io.stderr)(`${usage}\n`);
       return values.help ? 0 : 2;
     }
-    if (!["plan", "emit", "status", "watch", "serve", "run"].includes(command)) {
+    if (
+      !["plan", "emit", "status", "watch", "serve", "run", "install", "uninstall"].includes(command)
+    ) {
       throw new CliError(`unknown command: ${command}\n${usage}`, 2);
+    }
+    if (command === "install" || command === "uninstall") {
+      if (rest[0] !== "claude-code") {
+        throw new CliError(`${command}: expected target "claude-code"`, 2);
+      }
+      const inst = await import("./install/claude-code.js");
+      const opts = {
+        hooks: values.hooks,
+        workflow: values.workflow,
+        panel: values.panel,
+        dryRun: values["dry-run"],
+        env: io.env,
+        stdout: io.stdout,
+      };
+      if (command === "install") inst.installClaudeCode(opts);
+      else inst.uninstallClaudeCode(opts);
+      return 0;
     }
     if (command === "serve") {
       const port = values.port === undefined ? undefined : Number(values.port);
@@ -292,6 +318,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       return await runServe({
         port,
         repos: values.repo ?? [],
+        noContent: values["no-content"] === true,
         env: io.env,
         stdout: io.stdout,
         signal: io.signal,

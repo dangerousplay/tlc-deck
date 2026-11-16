@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { extname, join, normalize, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { serve } from "@hono/node-server";
 import {
   findProgressFiles,
@@ -14,6 +14,7 @@ import {
 import { parseLine, type RunState, type TlcEvent } from "@tlc-deck/protocol";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { applyHook, type HookBody, type Session, withIdle } from "./sessions/model.js";
 import { RETENTION_MS, SqliteStore, type Store } from "./store.js";
 
 export const DEFAULT_PORT = 7317;
@@ -30,6 +31,10 @@ export interface ServerOptions {
   repos?: string[];
   /** Built SPA directory. Default: apps/web/dist next to this package. */
   webDist?: string;
+  /** Do not store prompts or tool inputs from hooks. */
+  noContent?: boolean;
+  /** Silence before a session reads idle. Default 10 min. */
+  idleMs?: number;
   heartbeatMs?: number;
   scanMs?: number;
   pollMs?: number;
@@ -100,6 +105,32 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     return true;
   };
 
+  const idleMs = opts.idleMs;
+  const gitRoot = (cwd: string): string | undefined => {
+    let dir = resolve(cwd);
+    for (;;) {
+      if (existsSync(join(dir, ".git"))) return dir;
+      const up = dirname(dir);
+      if (up === dir) return undefined;
+      dir = up;
+    }
+  };
+  const projectOf = (cwd: string): string => basename(gitRoot(cwd) ?? resolve(cwd));
+  const present = (s: Session): Session => {
+    const v = withIdle(s, now(), idleMs);
+    if (v.state === "ended" || !v.project) return v;
+    const run = store
+      .listRuns()
+      .map(withStale)
+      .find((r) => r.status === "running" && r.threadId?.split("#")[0] === v.project);
+    return run ? { ...v, linkedRun: run.runId } : v;
+  };
+  const broadcast = (s: Session) => {
+    const e = { type: "CUSTOM", timestamp: now(), name: "tlc.session", value: s };
+    for (const sub of subscribers) sub(e);
+  };
+  const lastBroadcast = new Map<string, string>();
+
   const app = new Hono();
   app.use("*", async (c, next) => {
     if (!isLoopbackHost(c.req.header("host"))) return c.text("forbidden", 403);
@@ -116,6 +147,50 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     const r = parseLine(JSON.stringify(body));
     if (!r.ok) return c.json({ ok: false, error: r.reason }, 400);
     return c.json({ ok: true, duplicate: !ingest(r.event) });
+  });
+
+  app.post("/hooks", async (c) => {
+    // Respond immediately with an empty 200; never block the Claude Code session.
+    let body: HookBody | undefined;
+    try {
+      body = (await c.req.json()) as HookBody;
+    } catch {
+      return c.body(null, 200);
+    }
+    try {
+      const t = now();
+      const sid = typeof body?.session_id === "string" ? body.session_id : "";
+      const res = applyHook(sid ? store.getSession(sid) : undefined, body ?? {}, t, {
+        noContent: opts.noContent,
+        project: projectOf,
+      });
+      if (res) {
+        store.saveSession(res.session);
+        store.addSessionEvent(res.session.sessionId, res.event);
+        const shown = present(res.session);
+        lastBroadcast.set(shown.sessionId, shown.state);
+        broadcast(shown);
+        const root = res.session.cwd ? gitRoot(res.session.cwd) : undefined;
+        if (root) {
+          try {
+            registerRepo(root, env);
+          } catch {
+            // best effort
+          }
+        }
+      }
+    } catch {
+      // hooks must never fail the session
+    }
+    return c.body(null, 200);
+  });
+
+  app.get("/api/sessions", (c) => c.json(store.listSessions().map(present)));
+  app.get("/api/sessions/:id", (c) => {
+    const id = c.req.param("id");
+    const s = store.getSession(id);
+    if (!s) return c.json({ error: "not found" }, 404);
+    return c.json({ ...present(s), events: store.sessionEvents(id) });
   });
 
   app.get("/api/runs", (c) => c.json(store.listRuns().map(withStale)));
@@ -144,7 +219,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
         const snapshot = {
           type: "STATE_SNAPSHOT",
           timestamp: now(),
-          snapshot: { runs: store.listRuns().map(withStale) },
+          snapshot: {
+            runs: store.listRuns().map(withStale),
+            sessions: store.listSessions().map(present),
+          },
         };
         await stream.writeSSE({ event: "STATE_SNAPSHOT", data: JSON.stringify(snapshot) });
         let lastWrite = Date.now();
@@ -226,6 +304,21 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
   scan(); // rebuild runs from files before accepting requests
   initial = false;
   const scanTimer = setInterval(scan, opts.scanMs ?? 5000);
+  // Idle timer: broadcast sessions that went silent.
+  const idleTimer = setInterval(
+    () => {
+      for (const s of store.listSessions()) {
+        if (s.state === "ended") continue;
+        const shown = present(s);
+        if (lastBroadcast.get(s.sessionId) !== shown.state) {
+          lastBroadcast.set(s.sessionId, shown.state);
+          if (shown.state !== s.state) broadcast(shown);
+        }
+      }
+    },
+    Math.min(30_000, Math.max(50, (idleMs ?? 60_000) / 4)),
+  );
+  idleTimer.unref();
   const purge = () => store.purge(now() - RETENTION_MS);
   purge();
   const purgeTimer = setInterval(purge, 24 * 60 * 60 * 1000);
@@ -248,6 +341,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     async close() {
       clearInterval(scanTimer);
       clearInterval(purgeTimer);
+      clearInterval(idleTimer);
       for (const ac of tailers.values()) ac.abort();
       await Promise.all(tailPromises);
       (server as { closeAllConnections?: () => void }).closeAllConnections?.();

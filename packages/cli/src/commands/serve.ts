@@ -4,6 +4,7 @@ import { startServer } from "@tlc-deck/server";
 export interface ServeOptions {
   port?: number;
   repos: string[];
+  noContent?: boolean;
   env: Record<string, string | undefined>;
   stdout: (text: string) => void;
   signal?: AbortSignal;
@@ -15,6 +16,7 @@ export async function runServe(opts: ServeOptions): Promise<number> {
   const server = await startServer({
     port,
     env: opts.env,
+    noContent: opts.noContent,
     repos: opts.repos.map((r) => resolve(r)),
   });
   opts.stdout(`tlc serve listening on ${server.url}\n`);

@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { RunState, TlcEvent } from "@tlc-deck/protocol";
+import type { Session, SessionEvent } from "./sessions/model.js";
 
 export const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -13,6 +14,12 @@ export interface Store {
   getRun(runId: string): RunState | undefined;
   /** Newest first. */
   listRuns(): RunState[];
+  saveSession(session: Session): void;
+  getSession(sessionId: string): Session | undefined;
+  /** Most recently seen first. */
+  listSessions(): Session[];
+  addSessionEvent(sessionId: string, event: SessionEvent): void;
+  sessionEvents(sessionId: string): SessionEvent[];
   /** Delete runs, events and sessions last seen before `before`. Returns deleted run count. */
   purge(before: number): number;
   close(): void;
@@ -117,6 +124,43 @@ export class SqliteStore implements Store {
       .prepare("SELECT state FROM runs ORDER BY COALESCE(last_event_at, started_at, 0) DESC")
       .all() as { state: string }[];
     return rows.map((r) => JSON.parse(r.state) as RunState);
+  }
+
+  saveSession(s: Session): void {
+    this.db
+      .prepare(
+        `INSERT INTO sessions (session_id, cwd, project, state, last_seen, data) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(session_id) DO UPDATE SET cwd = excluded.cwd, project = excluded.project,
+           state = excluded.state, last_seen = excluded.last_seen, data = excluded.data`,
+      )
+      .run(s.sessionId, s.cwd ?? null, s.project ?? null, s.state, s.lastSeen, JSON.stringify(s));
+  }
+
+  getSession(sessionId: string): Session | undefined {
+    const row = this.db.prepare("SELECT data FROM sessions WHERE session_id = ?").get(sessionId) as
+      | { data: string }
+      | undefined;
+    return row ? (JSON.parse(row.data) as Session) : undefined;
+  }
+
+  listSessions(): Session[] {
+    const rows = this.db.prepare("SELECT data FROM sessions ORDER BY last_seen DESC").all() as {
+      data: string;
+    }[];
+    return rows.map((r) => JSON.parse(r.data) as Session);
+  }
+
+  addSessionEvent(sessionId: string, event: SessionEvent): void {
+    this.db
+      .prepare("INSERT INTO session_events (session_id, ts, event) VALUES (?, ?, ?)")
+      .run(sessionId, event.ts, JSON.stringify(event));
+  }
+
+  sessionEvents(sessionId: string): SessionEvent[] {
+    const rows = this.db
+      .prepare("SELECT event FROM session_events WHERE session_id = ? ORDER BY id")
+      .all(sessionId) as { event: string }[];
+    return rows.map((r) => JSON.parse(r.event) as SessionEvent);
   }
 
   purge(before: number): number {

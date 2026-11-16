@@ -1,0 +1,7 @@
+{
+  "hook_event_name": "Notification",
+  "session_id": "sess-1",
+  "cwd": "__CWD__",
+  "notification_type": "permission_prompt",
+  "message": "Claude needs your permission"
+}
