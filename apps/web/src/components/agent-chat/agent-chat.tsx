@@ -72,7 +72,7 @@ export function ToolCard({ call, result }: { call: AgentItem; result?: AgentItem
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left"
       >
-        <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
+        <ChevronRight className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
         <span className="shrink-0 font-mono text-xs font-semibold">{call.tool ?? "tool"}</span>
         <span
           data-testid="tool-summary"
