@@ -1,0 +1,14 @@
+{"type":"summary","summary":"ignored"}
+{"type":"system","timestamp":"2026-01-01T10:00:00.000Z","content":"ignored"}
+{"type":"user","timestamp":"2026-01-01T10:00:01.000Z","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>meta</local-command-caveat>"}}
+{"type":"user","timestamp":"2026-01-01T10:00:02.000Z","message":{"role":"user","content":"Add a README to the project"}}
+{"type":"attachment","timestamp":"2026-01-01T10:00:03.000Z","attachment":{"type":"skill_listing"}}
+{"type":"api-request","timestamp":"2026-01-01T10:00:03.000Z","params":{}}
+{"type":"assistant","timestamp":"2026-01-01T10:00:04.000Z","message":{"id":"msg_1","role":"assistant","model":"claude-opus-4-7","content":[{"type":"thinking","thinking":"hmm","signature":"x"}],"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":100,"cache_creation_input_tokens":20,"service_tier":"standard"}}}
+{"type":"assistant","timestamp":"2026-01-01T10:00:05.000Z","message":{"id":"msg_1","role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"I will read the directory first."}],"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":100,"cache_creation_input_tokens":20}}}
+{"type":"assistant","timestamp":"2026-01-01T10:00:06.000Z","message":{"id":"msg_1","role":"assistant","model":"claude-opus-4-7","content":[{"type":"tool_use","id":"toolu_01","name":"Bash","input":{"command":"ls","description":"List files"}}],"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":100,"cache_creation_input_tokens":20}}}
+{"type":"user","timestamp":"2026-01-01T10:00:07.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"package.json\nsrc"}]}}
+{"type":"assistant","timestamp":"2026-01-01T10:00:08.000Z","message":{"id":"msg_2","role":"assistant","model":"claude-opus-4-7","content":[{"type":"tool_use","id":"toolu_02","name":"Read","input":{"file_path":"/home/user/missing.md"}}],"usage":{"input_tokens":3,"output_tokens":7,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
+{"type":"user","timestamp":"2026-01-01T10:00:09.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_02","is_error":true,"content":[{"type":"text","text":"File does not exist."},{"type":"text","text":"Try again."}]}]}}
+{not valid json
+{"type":"assistant","timestamp":"2026-01-01T10:00:10.000Z","message":{"id":"msg_3","role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"Done."}],"usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}

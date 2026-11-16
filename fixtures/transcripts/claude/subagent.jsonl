@@ -1,0 +1,6 @@
+{"type":"user","agentId":"ab01","isSidechain":true,"timestamp":"2026-01-01T11:00:00.000Z","message":{"role":"user","content":"Find all TODO comments in src/"}}
+{"type":"attachment","agentId":"ab01","timestamp":"2026-01-01T11:00:00.500Z","attachment":{}}
+{"type":"api-request-shape","timestamp":"2026-01-01T11:00:00.600Z","shape":{}}
+{"type":"assistant","agentId":"ab01","timestamp":"2026-01-01T11:00:01.000Z","message":{"id":"msg_a","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"tool_use","id":"toolu_a1","name":"Grep","input":{"pattern":"TODO","path":"src"}}],"usage":{"input_tokens":50,"output_tokens":12,"cache_read_input_tokens":0,"cache_creation_input_tokens":300}}}
+{"type":"user","agentId":"ab01","timestamp":"2026-01-01T11:00:02.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_a1","content":[{"type":"text","text":"src/a.ts:3: // TODO fix"}]}]}}
+{"type":"assistant","agentId":"ab01","timestamp":"2026-01-01T11:00:03.000Z","message":{"id":"msg_b","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"text","text":"Found one TODO in src/a.ts line 3."}],"usage":{"input_tokens":60,"output_tokens":14,"cache_read_input_tokens":300,"cache_creation_input_tokens":0}}}
