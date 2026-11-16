@@ -12,13 +12,14 @@ import {
   STALE_MS,
   tail,
 } from "@tlc-deck/core";
-import { parseLine, type RunState, type TlcEvent } from "@tlc-deck/protocol";
+import { type AgentItem, parseLine, type RunState, type TlcEvent } from "@tlc-deck/protocol";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { AgentManager } from "./agents/index.js";
 import { decodeOtlp, type OtlpKind } from "./otel/decode.js";
 import { countSpans, extractUsage } from "./otel/usage.js";
 import { applyHook, type HookBody, type Session, withIdle } from "./sessions/model.js";
-import { RETENTION_MS, SqliteStore, type Store } from "./store.js";
+import { ITEM_RETENTION_MS, RETENTION_MS, SqliteStore, type Store } from "./store.js";
 
 export const DEFAULT_PORT = 7317;
 /** DD-12: workflow run id first seen this soon after RunStarted links to the run. */
@@ -43,6 +44,8 @@ export interface ServerOptions {
   heartbeatMs?: number;
   scanMs?: number;
   pollMs?: number;
+  /** Agent transcript poll interval. Default 200 ms. */
+  agentPollMs?: number;
   now?: () => number;
 }
 
@@ -195,6 +198,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     for (const sub of subscribers) sub(e);
   };
   const lastBroadcast = new Map<string, string>();
+  const agents = new AgentManager({
+    store,
+    now,
+    noContent: opts.noContent,
+    pollMs: opts.agentPollMs,
+    projectOf: (sid) => store.getSession(sid)?.project,
+    onAgent: (info) => {
+      const e = { type: "CUSTOM", timestamp: now(), name: "tlc.agent", value: info };
+      for (const sub of subscribers) sub(e);
+    },
+  });
 
   const app = new Hono();
   app.use("*", async (c, next) => {
@@ -221,6 +235,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       body = (await c.req.json()) as HookBody;
     } catch {
       return c.body(null, 200);
+    }
+    try {
+      if (body && typeof body === "object") agents.onHook(body as Record<string, unknown>);
+    } catch {
+      // best effort
     }
     try {
       const t = now();
@@ -361,6 +380,79 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     }
   });
 
+  app.get("/api/agents", (c) => {
+    const q = c.req.query();
+    return c.json(store.listAgents({ run: q.run, task: q.task, session: q.session }));
+  });
+  app.get("/api/agents/:id/items", (c) => {
+    const id = c.req.param("id");
+    if (!store.getAgent(id)) return c.json({ error: "not found" }, 404);
+    const after = Number.parseInt(c.req.query("after") ?? "", 10);
+    const limit = Number.parseInt(c.req.query("limit") ?? "", 10);
+    return c.json(
+      store.agentItems(
+        id,
+        Number.isFinite(after) ? after : -1,
+        Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 500) : 500,
+      ),
+    );
+  });
+  app.get("/api/agents/:id/stream", (c) => {
+    const id = c.req.param("id");
+    if (!store.getAgent(id)) return c.json({ error: "not found" }, 404);
+    return streamSSE(c, async (stream) => {
+      const queue: AgentItem[] = [];
+      let wake: (() => void) | undefined;
+      let aborted = false;
+      const unsub = agents.subscribe(id, (it) => {
+        queue.push(it);
+        wake?.();
+      });
+      stream.onAbort(() => {
+        aborted = true;
+        wake?.();
+      });
+      try {
+        let last = -1;
+        for (;;) {
+          const page = store.agentItems(id, last, 500);
+          if (page.length === 0) break;
+          for (const it of page) {
+            await stream.writeSSE({ event: "item", data: JSON.stringify(it) });
+            last = it.seq;
+          }
+        }
+        let lastWrite = Date.now();
+        while (!aborted) {
+          const next = queue.shift();
+          if (next) {
+            if (next.seq > last) {
+              last = next.seq;
+              await stream.writeSSE({ event: "item", data: JSON.stringify(next) });
+              lastWrite = Date.now();
+            }
+            continue;
+          }
+          const wait = Math.max(10, heartbeatMs - (Date.now() - lastWrite));
+          await new Promise<void>((res) => {
+            const t = setTimeout(res, wait);
+            wake = () => {
+              clearTimeout(t);
+              res();
+            };
+          });
+          wake = undefined;
+          if (!aborted && queue.length === 0 && Date.now() - lastWrite >= heartbeatMs) {
+            await stream.write(": heartbeat\n\n");
+            lastWrite = Date.now();
+          }
+        }
+      } finally {
+        unsub();
+      }
+    });
+  });
+
   app.get("/api/stream", (c) =>
     streamSSE(c, async (stream) => {
       const queue: unknown[] = [];
@@ -479,7 +571,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
     Math.min(30_000, Math.max(50, (idleMs ?? 60_000) / 4)),
   );
   idleTimer.unref();
-  const purge = () => store.purge(now() - RETENTION_MS);
+  const purge = () => {
+    store.purge(now() - RETENTION_MS);
+    store.purgeAgentItems(now() - ITEM_RETENTION_MS);
+  };
   purge();
   const purgeTimer = setInterval(purge, 24 * 60 * 60 * 1000);
   scanTimer.unref();
@@ -502,6 +597,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       clearInterval(scanTimer);
       clearInterval(purgeTimer);
       clearInterval(idleTimer);
+      agents.stop();
       for (const ac of tailers.values()) ac.abort();
       await Promise.all(tailPromises);
       (server as { closeAllConnections?: () => void }).closeAllConnections?.();

@@ -1,11 +1,19 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { RunState, TlcEvent } from "@tlc-deck/protocol";
+import type { AgentInfo, AgentItem, RunState, TlcEvent } from "@tlc-deck/protocol";
 import type { Usage, UsageSource } from "./otel/usage.js";
 import type { Session, SessionEvent } from "./sessions/model.js";
 
 export const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+/** DD-06: agent items are purged after 7 days (agent metadata follows RETENTION_MS). */
+export const ITEM_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+export interface AgentFilter {
+  run?: string;
+  task?: string;
+  session?: string;
+}
 
 export interface UsageRow extends Usage {
   ts: number;
@@ -35,6 +43,15 @@ export interface Store {
   sumUsage(by: { sessionId: string } | { runId: string }): Usage | undefined;
   /** Whether this workflow run id was seen before, and the tlc run it was linked to. */
   workflowLink(workflowRunId: string): { seen: boolean; runId?: string };
+  upsertAgent(info: AgentInfo): void;
+  getAgent(id: string): AgentInfo | undefined;
+  /** Newest first. */
+  listAgents(filter?: AgentFilter): AgentInfo[];
+  /** Insert items; existing (agentId, seq) are kept. */
+  addAgentItems(items: AgentItem[]): void;
+  agentItems(agentId: string, after?: number, limit?: number): AgentItem[];
+  /** Delete agent items with ts < before. Returns deleted count. */
+  purgeAgentItems(before: number): number;
   /** Delete runs, events and sessions last seen before `before`. Returns deleted run count. */
   purge(before: number): number;
   close(): void;
@@ -66,6 +83,17 @@ const MIGRATIONS: string[] = [
    CREATE INDEX usage_session ON usage(session_id);
    CREATE INDEX usage_run ON usage(run_id);
    CREATE INDEX usage_workflow ON usage(workflow_run_id);`,
+  `CREATE TABLE agents (
+     id TEXT PRIMARY KEY, run_id TEXT, session_id TEXT, task TEXT,
+     started_at INTEGER NOT NULL, ended_at INTEGER, data TEXT NOT NULL
+   );
+   CREATE INDEX agents_run ON agents(run_id);
+   CREATE INDEX agents_session ON agents(session_id);
+   CREATE TABLE agent_items (
+     agent_id TEXT NOT NULL, seq INTEGER NOT NULL, ts INTEGER NOT NULL, kind TEXT NOT NULL,
+     json TEXT NOT NULL, PRIMARY KEY (agent_id, seq)
+   );
+   CREATE INDEX agent_items_ts ON agent_items(ts);`,
 ];
 
 export class SqliteStore implements Store {
@@ -230,7 +258,81 @@ export class SqliteStore implements Store {
     return { seen: rows.length > 0, runId: rows.find((r) => r.run_id)?.run_id ?? undefined };
   }
 
+  upsertAgent(a: AgentInfo): void {
+    this.db
+      .prepare(
+        `INSERT INTO agents (id, run_id, session_id, task, started_at, ended_at, data)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET run_id = excluded.run_id, session_id = excluded.session_id,
+           task = excluded.task, started_at = excluded.started_at, ended_at = excluded.ended_at,
+           data = excluded.data`,
+      )
+      .run(
+        a.id,
+        a.runId ?? null,
+        a.sessionId ?? null,
+        a.task ?? null,
+        a.startedAt,
+        a.endedAt ?? null,
+        JSON.stringify(a),
+      );
+  }
+
+  getAgent(id: string): AgentInfo | undefined {
+    const row = this.db.prepare("SELECT data FROM agents WHERE id = ?").get(id) as
+      | { data: string }
+      | undefined;
+    return row ? (JSON.parse(row.data) as AgentInfo) : undefined;
+  }
+
+  listAgents(f: AgentFilter = {}): AgentInfo[] {
+    const where: string[] = [];
+    const args: string[] = [];
+    for (const [col, v] of [
+      ["run_id", f.run],
+      ["task", f.task],
+      ["session_id", f.session],
+    ] as const) {
+      if (v !== undefined) {
+        where.push(`${col} = ?`);
+        args.push(v);
+      }
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT data FROM agents ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+         ORDER BY started_at DESC, id`,
+      )
+      .all(...args) as { data: string }[];
+    return rows.map((r) => JSON.parse(r.data) as AgentInfo);
+  }
+
+  addAgentItems(items: AgentItem[]): void {
+    const st = this.db.prepare(
+      "INSERT OR IGNORE INTO agent_items (agent_id, seq, ts, kind, json) VALUES (?, ?, ?, ?, ?)",
+    );
+    for (const it of items) st.run(it.agentId, it.seq, it.ts, it.kind, JSON.stringify(it));
+  }
+
+  agentItems(agentId: string, after = -1, limit = 500): AgentItem[] {
+    const rows = this.db
+      .prepare("SELECT json FROM agent_items WHERE agent_id = ? AND seq > ? ORDER BY seq LIMIT ?")
+      .all(agentId, after, limit) as { json: string }[];
+    return rows.map((r) => JSON.parse(r.json) as AgentItem);
+  }
+
+  purgeAgentItems(before: number): number {
+    return Number(this.db.prepare("DELETE FROM agent_items WHERE ts < ?").run(before).changes);
+  }
+
   purge(before: number): number {
+    this.db
+      .prepare(
+        `DELETE FROM agent_items WHERE agent_id IN
+           (SELECT id FROM agents WHERE COALESCE(ended_at, started_at) < ?)`,
+      )
+      .run(before);
+    this.db.prepare("DELETE FROM agents WHERE COALESCE(ended_at, started_at) < ?").run(before);
     const old = this.db
       .prepare("SELECT run_id FROM runs WHERE COALESCE(last_event_at, started_at, 0) < ?")
       .all(before) as { run_id: string }[];
