@@ -85,3 +85,20 @@ test("parseTaskDetails: memo fixture golden, requirement text from spec", async 
     join(dir, "memo-harness-integration/expected-details.json"),
   );
 });
+
+test("parseTaskDetails: positional requirement ids map to numbered criteria", () => {
+  const spec = [
+    "### P1: Story",
+    "",
+    "**Acceptance Criteria**:",
+    "",
+    "1. WHEN a THEN b.",
+    "2. WHEN c THEN d.",
+    "",
+    "**Requirement IDs**: AL-01..02",
+  ].join("\n");
+  const tasks = "### T1: One\n\n**Requirement**: AL-02\n";
+  expect(parseTaskDetails(tasks, spec).T1?.requirements).toEqual([
+    { id: "AL-02", text: "WHEN c THEN d." },
+  ]);
+});

@@ -185,9 +185,31 @@ export interface TaskDetails {
 /** requirement id -> acceptance-criteria text from spec.md. */
 function criteriaMap(spec: string): Map<string, string> {
   const map = new Map<string, string>();
+  // Inline form: "AL-01: text" (numbered, bulleted or bare).
   for (const line of spec.split(/\r?\n/)) {
     const m = /^\s*(?:\d+\.\s*|[-*]\s*)?([A-Z][A-Za-z]*-\d+):\s*(.+?)\s*$/.exec(line);
     if (m?.[1] && !map.has(m[1])) map.set(m[1], m[2] ?? "");
+  }
+  // Positional form: a story's numbered acceptance criteria, then
+  // "**Requirement IDs**: AL-01..05" mapping the i-th id to the i-th criterion.
+  let criteria: string[] = [];
+  for (const line of spec.split(/\r?\n/)) {
+    if (/^#{1,4}\s/.test(line)) {
+      criteria = [];
+      continue;
+    }
+    const c = /^\s*\d+\.\s+(.+?)\s*$/.exec(line);
+    if (c?.[1]) {
+      criteria.push(c[1]);
+      continue;
+    }
+    if (/\*\*Requirement IDs\*\*/i.test(line)) {
+      expandIds(line).forEach((id, i) => {
+        const text = criteria[i];
+        if (text && !map.has(id)) map.set(id, text);
+      });
+      criteria = [];
+    }
   }
   return map;
 }

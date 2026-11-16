@@ -27,6 +27,35 @@ function Truncated({ item }: { item: AgentItem }) {
   );
 }
 
+/** One-line summary of a tool call's input: command, path, pattern, url or first string field. */
+export function toolSummary(input: unknown): string {
+  let v: unknown = input;
+  if (typeof input === "string") {
+    try {
+      v = JSON.parse(input);
+    } catch {
+      return input.split("\n")[0] ?? "";
+    }
+  }
+  if (!v || typeof v !== "object") return "";
+  const o = v as Record<string, unknown>;
+  for (const k of [
+    "command",
+    "file_path",
+    "path",
+    "pattern",
+    "url",
+    "query",
+    "description",
+    "prompt",
+  ]) {
+    const x = o[k];
+    if (typeof x === "string" && x.trim()) return x.split("\n")[0] ?? "";
+  }
+  const first = Object.values(o).find((x) => typeof x === "string" && x.trim());
+  return typeof first === "string" ? (first.split("\n")[0] ?? "") : "";
+}
+
 export function ToolCard({ call, result }: { call: AgentItem; result?: AgentItem | undefined }) {
   const [open, setOpen] = useState(false);
   const error = result?.isError === true;
@@ -44,8 +73,14 @@ export function ToolCard({ call, result }: { call: AgentItem; result?: AgentItem
         className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left"
       >
         <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
-        <span className="font-mono text-xs font-semibold">{call.tool ?? "tool"}</span>
-        <span className="ml-auto text-xs text-muted-foreground">
+        <span className="shrink-0 font-mono text-xs font-semibold">{call.tool ?? "tool"}</span>
+        <span
+          data-testid="tool-summary"
+          className="min-w-0 truncate font-mono text-xs text-muted-foreground"
+        >
+          {toolSummary(call.input)}
+        </span>
+        <span className="ml-auto shrink-0 text-xs text-muted-foreground">
           {result ? (error ? "error" : "done") : "running"}
         </span>
       </button>

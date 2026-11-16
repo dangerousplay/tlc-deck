@@ -71,6 +71,7 @@ describe("AgentChat", () => {
     const card = screen.getByTestId("tool-card");
     expect(card).toHaveAttribute("data-error", "true");
     expect(card).toHaveAttribute("data-open", "false");
+    expect(screen.getByTestId("tool-summary")).toHaveTextContent("ls");
     expect(screen.queryByTestId("truncated-notice")).toBeNull();
     fireEvent.click(card.querySelector("button") as HTMLElement);
     expect(card).toHaveAttribute("data-open", "true");
