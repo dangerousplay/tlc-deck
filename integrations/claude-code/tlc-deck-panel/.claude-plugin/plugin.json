@@ -1,0 +1,15 @@
+{
+  "name": "tlc-deck-panel",
+  "version": "0.1.0",
+  "description": "tlc-deck run status entry and /tlc pane for Claude Code (reads `tlc status --json`, never the server)",
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "tlc_bin": {
+      "type": "string",
+      "title": "tlc binary",
+      "description": "Path to the tlc executable",
+      "default": "tlc"
+    }
+  }
+}

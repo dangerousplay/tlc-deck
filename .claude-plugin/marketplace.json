@@ -1,0 +1,11 @@
+{
+  "name": "tlc-deck",
+  "owner": { "name": "tlc-deck" },
+  "plugins": [
+    {
+      "name": "tlc-deck-panel",
+      "source": "./integrations/claude-code/tlc-deck-panel",
+      "description": "tlc-deck run board pane and status entry for Claude Code"
+    }
+  ]
+}
