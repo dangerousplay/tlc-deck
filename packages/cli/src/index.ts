@@ -13,7 +13,12 @@ export { run } from "./main.js";
 
 const entry = process.argv[1];
 if (entry && import.meta.url === pathToFileURL(realpathSync(entry)).href) {
+  const ac = new AbortController();
+  process.once("SIGINT", () => ac.abort());
+  process.once("SIGTERM", () => ac.abort());
   run(process.argv.slice(2), {
+    isTTY: process.stdout.isTTY === true,
+    signal: ac.signal,
     cwd: process.cwd(),
     env: process.env,
     stdout: (t) => process.stdout.write(t),

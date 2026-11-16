@@ -16,6 +16,7 @@ import {
   registerRepo,
 } from "@tlc-deck/core";
 import { PROTOCOL_V, parseLine } from "@tlc-deck/protocol";
+import type { DriverFactory } from "@tlc-deck/runner";
 
 export interface Io {
   cwd: string;
@@ -23,6 +24,11 @@ export interface Io {
   stdout: (text: string) => void;
   stderr: (text: string) => void;
   version: string;
+  /** Whether stdout is a terminal (watch live view). Default false. */
+  isTTY?: boolean;
+  signal?: AbortSignal;
+  /** Test hook: override the runner's harness drivers. */
+  driverFactory?: DriverFactory;
 }
 
 class CliError extends Error {
@@ -40,6 +46,9 @@ const usage = `usage: tlc <command> [options]
   emit   <type> [json] [--run id] [--feature f] [--harness h] [--driver d] [--source s] [--name n]
   emit   --start [json] [--feature f]            print a new run id
   status [--feature f] [--run id] [--json]
+  watch  [--feature f] [--run id]
+  serve  [--port 7317] [--repo path]...
+  run    [--feature f] [--harness h] [--only T1,T2] [--retries n] [--no-commit] [--resume] [--concurrency n]
   --version`;
 
 const OPTIONS = {
@@ -51,6 +60,13 @@ const OPTIONS = {
   driver: { type: "string" },
   source: { type: "string" },
   name: { type: "string" },
+  port: { type: "string" },
+  only: { type: "string" },
+  retries: { type: "string" },
+  concurrency: { type: "string" },
+  "no-commit": { type: "boolean" },
+  resume: { type: "boolean" },
+  repo: { type: "string", multiple: true },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -155,7 +171,7 @@ async function cmdEmit(
   repo: string,
   feature: string,
   positionals: string[],
-  values: Record<string, string | boolean | undefined>,
+  values: Record<string, string | boolean | string[] | undefined>,
   io: Io,
 ): Promise<number> {
   const start = values.start === true;
@@ -264,12 +280,65 @@ export async function run(argv: string[], io: Io): Promise<number> {
       (values.help ? io.stdout : io.stderr)(`${usage}\n`);
       return values.help ? 0 : 2;
     }
-    if (!["plan", "emit", "status"].includes(command)) {
+    if (!["plan", "emit", "status", "watch", "serve", "run"].includes(command)) {
       throw new CliError(`unknown command: ${command}\n${usage}`, 2);
+    }
+    if (command === "serve") {
+      const port = values.port === undefined ? undefined : Number(values.port);
+      if (port !== undefined && !Number.isInteger(port)) {
+        throw new CliError(`invalid --port: ${values.port}`, 2);
+      }
+      const { runServe } = await import("./commands/serve.js");
+      return await runServe({
+        port,
+        repos: values.repo ?? [],
+        env: io.env,
+        stdout: io.stdout,
+        signal: io.signal,
+      });
     }
     const repo = repoRoot(io.cwd);
     const feature = detectFeature(repo, values.feature);
+    if (command === "run") {
+      const num = (name: "retries" | "concurrency") => {
+        const raw = values[name];
+        if (raw === undefined) return undefined;
+        const n = Number(raw);
+        if (!Number.isInteger(n) || n < (name === "retries" ? 0 : 1)) {
+          throw new CliError(`invalid --${name}: ${raw}`, 2);
+        }
+        return n;
+      };
+      const { runRun } = await import("./commands/run.js");
+      return await runRun({
+        repo,
+        feature,
+        harness: values.harness,
+        only: values.only
+          ?.split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        retries: num("retries"),
+        concurrency: num("concurrency"),
+        noCommit: values["no-commit"] === true,
+        resume: values.resume === true,
+        env: io.env,
+        stdout: io.stdout,
+        signal: io.signal,
+        driverFactory: io.driverFactory,
+      });
+    }
     if (command === "plan") return cmdPlan(repo, feature, values.json === true, io);
+    if (command === "watch") {
+      const { runWatch } = await import("./watch/index.js");
+      return await runWatch({
+        file: progressFile(repo, feature),
+        run: values.run,
+        tty: io.isTTY === true,
+        stdout: io.stdout,
+        signal: io.signal,
+      });
+    }
     if (command === "status") return cmdStatus(repo, feature, values.run, values.json === true, io);
     return await cmdEmit(repo, feature, rest, values, io);
   } catch (err) {

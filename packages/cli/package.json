@@ -16,10 +16,16 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "ink-testing-library": "^4.0.0"
   },
   "dependencies": {
     "@tlc-deck/core": "workspace:*",
-    "@tlc-deck/protocol": "workspace:*"
+    "@tlc-deck/protocol": "workspace:*",
+    "@tlc-deck/runner": "workspace:*",
+    "@tlc-deck/server": "workspace:*",
+    "ink": "^8.0.0",
+    "react": "^19.3.1"
   }
 }
