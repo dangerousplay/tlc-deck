@@ -3,3 +3,7 @@ dist
 *.tsbuildinfo
 coverage
 .DS_Store
+
+# tlc run history (local)
+.specs/features/*/progress.ndjson*
+.specs/features/*/agents/
