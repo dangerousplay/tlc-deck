@@ -67,6 +67,15 @@ Use `--dry-run` to preview changes; `tlc uninstall claude-code` reverts them. Ot
 (Codex, Gemini, OpenCode, agy) are driven through `tlc run --harness <name>` or by calling
 `tlc emit` from their own hooks.
 
+## Agent live view
+
+The dashboard shows what each agent is doing: a task view (`/runs/:run/tasks/:task`) with the spec
+text and an agent chat (messages, collapsible tool calls and results, live updates), and the agents
+of a Claude Code session (main, subagents, workflow agents). `tlc watch` can focus on one task. For
+`tlc run`, agent logs are written to `.specs/features/<feature>/agents/<runId>/<agentId>.ndjson`.
+Content is capped at 8 KB per field, secrets are redacted, items are kept 7 days, and
+`tlc serve --no-content` stores no text or tool data. Details: [docs/protocol.md](docs/protocol.md#agents-agent-live).
+
 ## Protocol
 
 See [docs/protocol.md](docs/protocol.md).
