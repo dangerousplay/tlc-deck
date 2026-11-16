@@ -16,6 +16,7 @@ describe("fold golden 15-task run", () => {
   test("run status: finished with a failed task", () => {
     expect(s.runId).toBe("tlc_01JGOLDEN");
     expect(s.threadId).toBe("repo#golden");
+    expect([s.repo, s.feature, s.harness]).toEqual(["repo", "golden", "claude-code"]);
     expect(s.status).toBe("failed");
     expect(s.finishedAt).toBe(end);
   });

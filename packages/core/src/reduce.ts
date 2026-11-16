@@ -80,11 +80,16 @@ export function fold(events: readonly TlcEvent[], opts: FoldOptions = {}): RunSt
     if (ts !== undefined) state.lastEventAt = Math.max(state.lastEventAt ?? 0, ts);
     if (typeof ev.threadId === "string") state.threadId ??= ev.threadId;
     state.threadId ??= ev.metadata.threadId;
+    if (typeof ev.metadata.harness === "string") state.harness ??= ev.metadata.harness;
 
     switch (ev.type) {
-      case "RUN_STARTED":
+      case "RUN_STARTED": {
         state.startedAt ??= ts;
+        const input = obj(ev.input);
+        if (typeof input.feature === "string") state.feature ??= input.feature;
+        if (typeof input.harness === "string") state.harness ??= input.harness;
         break;
+      }
       case "RUN_FINISHED": {
         const failed = obj(ev.result).failed;
         state.status = Array.isArray(failed) && failed.length > 0 ? "failed" : "finished";
@@ -193,6 +198,12 @@ export function fold(events: readonly TlcEvent[], opts: FoldOptions = {}): RunSt
     m.reached =
       explicitMilestones.has(m.name) ||
       (m.tasks.length > 0 && m.tasks.every((id) => state.tasks[id]?.status === "done"));
+  }
+
+  if (state.threadId?.includes("#")) {
+    const [repo, feature] = state.threadId.split("#", 2);
+    state.repo ??= repo;
+    state.feature ??= feature;
   }
 
   const last = state.lastEventAt;

@@ -35,6 +35,9 @@ export function RunsTable({ runs, now = Date.now() }: { runs: RunState[]; now?: 
       <TableHeader>
         <TableRow>
           <TableHead>Run</TableHead>
+          <TableHead>Repo</TableHead>
+          <TableHead>Feature</TableHead>
+          <TableHead>Harness</TableHead>
           <TableHead>Status</TableHead>
           <TableHead>Milestones</TableHead>
           <TableHead>Tasks</TableHead>
@@ -51,6 +54,9 @@ export function RunsTable({ runs, now = Date.now() }: { runs: RunState[]; now?: 
                 {r.runId}
               </a>
             </TableCell>
+            <TableCell data-testid="repo">{r.repo ?? "—"}</TableCell>
+            <TableCell data-testid="feature">{r.feature ?? "—"}</TableCell>
+            <TableCell data-testid="harness">{r.harness ?? "—"}</TableCell>
             <TableCell>
               <Badge variant={VARIANT[r.status]} data-testid="status">
                 {r.status}

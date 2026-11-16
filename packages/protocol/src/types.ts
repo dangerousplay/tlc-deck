@@ -60,6 +60,11 @@ export interface MilestoneState {
 export interface RunState {
   runId: string;
   threadId?: string;
+  /** Repo name and feature, from `threadId` (`<repo>#<feature>`) or RUN_STARTED input. */
+  repo?: string;
+  feature?: string;
+  /** Harness that drove the run (envelope `metadata.harness`). */
+  harness?: string;
   status: RunStatus;
   startedAt?: number;
   finishedAt?: number;

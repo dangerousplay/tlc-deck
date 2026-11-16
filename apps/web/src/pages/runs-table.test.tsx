@@ -8,6 +8,9 @@ import { RunsTable } from "./runs-table";
 const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const run: RunState = {
   runId: "run-1",
+  repo: "memo",
+  feature: "harness-integration",
+  harness: "codex",
   status: "running",
   startedAt: 1_000,
   tasks: {
@@ -36,6 +39,9 @@ describe("RunsTable", () => {
   test("renders status, milestones, blockers and cost", () => {
     render(<RunsTable runs={[run]} now={61_000} />);
     const row = screen.getByTestId("run-row");
+    expect(within(row).getByTestId("repo")).toHaveTextContent("memo");
+    expect(within(row).getByTestId("feature")).toHaveTextContent("harness-integration");
+    expect(within(row).getByTestId("harness")).toHaveTextContent("codex");
     expect(within(row).getByTestId("status")).toHaveTextContent("running");
     expect(within(row).getByTestId("milestones")).toHaveTextContent("3/5");
     expect(within(row).getByTestId("tasks")).toHaveTextContent("1/2");
