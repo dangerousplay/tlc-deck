@@ -1,0 +1,67 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Setup",
+      "milestone": "Wave 1",
+      "dependsOn": [],
+      "parallel": false,
+      "done": false
+    },
+    {
+      "id": "T2",
+      "title": "Left",
+      "milestone": "Wave 2",
+      "dependsOn": [
+        "T1"
+      ],
+      "parallel": true,
+      "done": false
+    },
+    {
+      "id": "T3",
+      "title": "Right",
+      "milestone": "Wave 2",
+      "dependsOn": [
+        "T1"
+      ],
+      "parallel": true,
+      "done": false
+    },
+    {
+      "id": "T4",
+      "title": "Join",
+      "milestone": "Wave 3",
+      "dependsOn": [
+        "T2",
+        "T3"
+      ],
+      "parallel": false,
+      "done": false
+    }
+  ],
+  "milestones": [
+    {
+      "name": "Wave 1",
+      "source": "wave",
+      "tasks": [
+        "T1"
+      ]
+    },
+    {
+      "name": "Wave 2",
+      "source": "wave",
+      "tasks": [
+        "T2",
+        "T3"
+      ]
+    },
+    {
+      "name": "Wave 3",
+      "source": "wave",
+      "tasks": [
+        "T4"
+      ]
+    }
+  ]
+}

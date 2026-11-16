@@ -1,0 +1,51 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Scaffold",
+      "milestone": "Foundation",
+      "dependsOn": [],
+      "parallel": false,
+      "done": true,
+      "requirement": "A-01"
+    },
+    {
+      "id": "T2",
+      "title": "Core",
+      "milestone": "Foundation",
+      "dependsOn": [
+        "T1"
+      ],
+      "parallel": true,
+      "done": true
+    },
+    {
+      "id": "T3",
+      "title": "UI",
+      "milestone": "Delivery",
+      "dependsOn": [
+        "T1",
+        "T2"
+      ],
+      "parallel": true,
+      "done": false
+    }
+  ],
+  "milestones": [
+    {
+      "name": "Foundation",
+      "source": "field",
+      "tasks": [
+        "T1",
+        "T2"
+      ]
+    },
+    {
+      "name": "Delivery",
+      "source": "field",
+      "tasks": [
+        "T3"
+      ]
+    }
+  ]
+}

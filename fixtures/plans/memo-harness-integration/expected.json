@@ -1,0 +1,221 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Crate scaffold, config, project",
+      "milestone": "P1",
+      "dependsOn": [],
+      "parallel": false,
+      "done": true,
+      "requirement": "CLI-04, edge cases (project name)"
+    },
+    {
+      "id": "T2",
+      "title": "Local state",
+      "milestone": "P1",
+      "dependsOn": [
+        "T1"
+      ],
+      "parallel": false,
+      "done": true,
+      "requirement": "HOOK-08 (storage), edge case concurrency, D-08"
+    },
+    {
+      "id": "T3",
+      "title": "Login, credentials, token",
+      "milestone": "P1",
+      "dependsOn": [
+        "T2"
+      ],
+      "parallel": false,
+      "done": true,
+      "requirement": "CLI-01, CLI-02, CLI-03, CLI-05, DD-02, DD-08"
+    },
+    {
+      "id": "T4",
+      "title": "MCP client and manual commands",
+      "milestone": "P1",
+      "dependsOn": [
+        "T3"
+      ],
+      "parallel": false,
+      "done": true,
+      "requirement": "CLI-06, CLI-07, NOTE-01, HOOK-07 (state)"
+    },
+    {
+      "id": "T5",
+      "title": "Redaction, turns and capture builder",
+      "milestone": "P1",
+      "dependsOn": [
+        "T2"
+      ],
+      "parallel": false,
+      "done": true,
+      "requirement": "CAPT-01..05, HOOK-10, DD-12"
+    },
+    {
+      "id": "T6",
+      "title": "Hook engine",
+      "milestone": "P1",
+      "dependsOn": [
+        "T4",
+        "T5"
+      ],
+      "parallel": false,
+      "done": true,
+      "requirement": "HOOK-02..10, D-10"
+    },
+    {
+      "id": "T7",
+      "title": "Harness adapters (stdin/stdout)",
+      "milestone": "P1",
+      "dependsOn": [
+        "T6"
+      ],
+      "parallel": false,
+      "done": true,
+      "requirement": "HOOK-01, ADAPT-05 (matrix data)"
+    },
+    {
+      "id": "T8",
+      "title": "`memo mcp` stdio proxy",
+      "milestone": "Wave 5",
+      "dependsOn": [
+        "T4"
+      ],
+      "parallel": false,
+      "done": true,
+      "requirement": "DD-03, INST-05, IND-03"
+    },
+    {
+      "id": "T9",
+      "title": "statusline, events, status, doctor",
+      "milestone": "P1",
+      "dependsOn": [
+        "T8"
+      ],
+      "parallel": false,
+      "done": true,
+      "requirement": "IND-01..05, PANEL-02 (data), DIAG-01, DIAG-02"
+    },
+    {
+      "id": "T10",
+      "title": "Installer core + Codex",
+      "milestone": "P1",
+      "dependsOn": [
+        "T7"
+      ],
+      "parallel": false,
+      "done": true,
+      "requirement": "INST-01..04, ADAPT-04, ADAPT-05"
+    },
+    {
+      "id": "T11",
+      "title": "Installers: Claude Code, Gemini CLI, OpenCode",
+      "milestone": "P1",
+      "dependsOn": [
+        "T10"
+      ],
+      "parallel": false,
+      "done": true,
+      "requirement": "INST-01..05, ADAPT-01..03, IND-04"
+    },
+    {
+      "id": "T12",
+      "title": "Claude Code plugin + marketplace",
+      "milestone": "Wave 9",
+      "dependsOn": [
+        "T11"
+      ],
+      "parallel": false,
+      "done": true,
+      "requirement": "ADAPT-01"
+    },
+    {
+      "id": "T13",
+      "title": "Claude Code mod `memo-panel`",
+      "milestone": "P2",
+      "dependsOn": [
+        "T12"
+      ],
+      "parallel": false,
+      "done": true,
+      "requirement": "PANEL-01..03, IND-01 (mod form), DD-04, DD-05"
+    },
+    {
+      "id": "T14",
+      "title": "OpenCode plugin, Gemini extension, Codex files, matrix README",
+      "milestone": "Wave 11",
+      "dependsOn": [
+        "T13"
+      ],
+      "parallel": false,
+      "done": true,
+      "requirement": "ADAPT-02..05"
+    },
+    {
+      "id": "T15",
+      "title": "End-to-end and docs",
+      "milestone": "Wave 12",
+      "dependsOn": [
+        "T14"
+      ],
+      "parallel": false,
+      "done": true,
+      "requirement": "Success criteria 1-3"
+    }
+  ],
+  "milestones": [
+    {
+      "name": "P1",
+      "source": "priority",
+      "tasks": [
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6",
+        "T7",
+        "T9",
+        "T10",
+        "T11"
+      ]
+    },
+    {
+      "name": "Wave 5",
+      "source": "wave",
+      "tasks": [
+        "T8"
+      ]
+    },
+    {
+      "name": "Wave 9",
+      "source": "wave",
+      "tasks": [
+        "T12"
+      ]
+    },
+    {
+      "name": "P2",
+      "source": "priority",
+      "tasks": [
+        "T13"
+      ]
+    },
+    {
+      "name": "Wave 11",
+      "source": "wave",
+      "tasks": [
+        "T14"
+      ]
+    },
+    {
+      "name": "Wave 12",
+      "source": "wave",
+      "tasks": [
+        "T15"
+      ]
+    }
+  ]
+}
