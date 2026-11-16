@@ -158,6 +158,8 @@ const projCfg = parseCfg(parsed.project_config, '.specs/tlc-execute.json')
 ROLES = merge(userCfg.roles, projCfg.roles, a.roles)
 const RETRIES = a.retries ?? projCfg.retries ?? userCfg.retries ?? 1
 const COMMIT = a.commit ?? projCfg.commit ?? userCfg.commit ?? true
+// Trailer line ending every task commit (e.g. "Co-Authored-By: ..."); empty string = none.
+const TRAILER = a.trailer ?? projCfg.commitTrailer ?? userCfg.commitTrailer ?? ''
 const show = r => (r === false ? 'off' : `${r.model || 'inherit'}${r.effort ? `/${r.effort}` : ''}`)
 log(`roles: ${Object.entries(ROLES).map(([k, v]) => `${k}=${show(v)}`).join(', ')}; retries=${RETRIES}; commit=${COMMIT}`)
 
@@ -268,7 +270,7 @@ while (pending.length && !stop) {
     const t = r.task
     if (COMMIT && r.impl.files_changed.length) {
       await ag(
-        `Create one git commit containing ONLY these files: ${r.impl.files_changed.join(' ')}. Use \`git add -- <files>\` then commit with a Conventional Commits message for task ${r.task.id}: "${r.task.title}". Do not touch other files. Reply with the commit hash.${progress([
+        `Create one git commit containing ONLY these files: ${r.impl.files_changed.join(' ')}. Use \`git add -- <files>\` (new files too). Before committing, run \`git status --short\`: if an untracked or modified file is clearly part of this task (inside its Where paths, or a source file the listed files import) and not in the list, add it as well and mention it. Commit with a Conventional Commits message for task ${r.task.id}: "${r.task.title}" ending with "(${r.task.id})" in the subject.${TRAILER ? ` End the message body with exactly this trailer line and no other Co-Authored-By line: ${TRAILER}` : ' Add no Co-Authored-By trailer.'} Do not touch unrelated files. Reply with the commit hash.${progress([
           ...start([step('orchestrator', 'STEP_STARTED', t, 'commit')]),
           ...end([
             custom('orchestrator', 'tlc.task', { id: t.id, status: 'done', stage: 'commit', commit: '<commit sha>', files: r.impl.files_changed }),
