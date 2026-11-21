@@ -12,6 +12,7 @@ import {
   PROGRESS_FILE,
   parsePlan,
   readEvents,
+  taskBlock,
 } from "@tlc-deck/core";
 import {
   AdvisorOutputSchema,
@@ -73,28 +74,6 @@ class TaskFailed extends Error {}
 
 const ulidish = () => randomBytes(13).toString("hex").toUpperCase();
 
-function taskBlocks(tasksMd: string): Map<string, string> {
-  const out = new Map<string, string>();
-  let id: string | null = null;
-  let buf: string[] = [];
-  const flush = () => {
-    if (id) out.set(id, buf.join("\n").trim());
-    id = null;
-    buf = [];
-  };
-  for (const line of tasksMd.split(/\r?\n/)) {
-    const head = /^###\s+(T\d+):/.exec(line);
-    if (head) {
-      flush();
-      id = head[1] as string;
-      buf.push(line);
-    } else if (/^#{1,3}\s/.test(line) || /^---\s*$/.test(line)) flush();
-    else if (id) buf.push(line);
-  }
-  flush();
-  return out;
-}
-
 function waves(tasks: PlanTask[]): PlanTask[][] {
   const layer = new Map<string, number>();
   let rest = tasks.slice();
@@ -135,7 +114,6 @@ export async function runPlan(opts: RunOptions): Promise<RunResult> {
   const tasksMd = readFileSync(tasksFile, "utf8");
   const specFile = join(dir, "spec.md");
   const plan: Plan = parsePlan(tasksMd, existsSync(specFile) ? readFileSync(specFile, "utf8") : "");
-  const blocks = taskBlocks(tasksMd);
   const config = loadConfig({ repoDir: repo, env });
   const factory =
     opts.driverFactory ??
@@ -370,7 +348,7 @@ export async function runPlan(opts: RunOptions): Promise<RunResult> {
 
   async function execTask(t: PlanTask): Promise<void> {
     const id = t.id;
-    const block = blocks.get(id) ?? `### ${id}: ${t.title}`;
+    const block = taskBlock(tasksMd, id) ?? `### ${id}: ${t.title}`;
     const base = { task: block, paths: refs };
     let attempt = 0;
     let files: string[] = [];
