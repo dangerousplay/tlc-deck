@@ -135,3 +135,21 @@ test("install --otel writes env block, idempotent, uninstall restores", async ()
   expect(await tlc("uninstall", "claude-code", "--otel")).toBe(0);
   expect(JSON.parse(readFileSync(settings(), "utf8"))).toEqual(JSON.parse(original));
 });
+
+test("upgrade: replaces old unmarked tlc-deck hooks instead of duplicating them", async () => {
+  const { addHooks } = await import("../src/install/claude-code.js");
+  const old = {
+    hooks: {
+      PreToolUse: [
+        { hooks: [{ type: "http", url: "http://127.0.0.1:7317/hooks", timeout: 2 }] },
+        { hooks: [{ type: "command", command: "other-tool" }] },
+      ],
+    },
+  };
+  const next = addHooks(old, "http://127.0.0.1:7317/hooks") as {
+    hooks: Record<string, { hooks: { type: string; url?: string; command?: string }[] }[]>;
+  };
+  const pre = next.hooks.PreToolUse ?? [];
+  expect(pre.filter((e) => e.hooks.some((h) => h.url?.endsWith("/hooks")))).toHaveLength(1);
+  expect(pre.some((e) => e.hooks.some((h) => h.command === "other-tool"))).toBe(true);
+});

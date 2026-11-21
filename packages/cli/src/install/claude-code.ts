@@ -71,9 +71,22 @@ function detectFormat(text: string): { indent: string | number; eol: string } {
   return { indent: m ? m[0] : 2, eol: text.endsWith("\n") ? "\n" : "" };
 }
 
+/** Hook URL of any tlc-deck version: local `/hooks` endpoint on any port. */
+const LOCAL_HOOK_URL = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\]):\d+\/hooks$/;
+
+/** Ours = marked by this version, or written by an earlier unmarked version (local hook URL, ensure command). */
 function isOurs(entry: unknown): boolean {
   const hooks = (entry as { hooks?: unknown[] } | null)?.hooks;
-  return Array.isArray(hooks) && hooks.some((h) => (h as Json | null)?.[MARKER] === true);
+  return (
+    Array.isArray(hooks) &&
+    hooks.some((raw) => {
+      const h = raw as Json | null;
+      if (!h) return false;
+      if (h[MARKER] === true) return true;
+      if (h.type === "http" && typeof h.url === "string" && LOCAL_HOOK_URL.test(h.url)) return true;
+      return h.type === "command" && h.command === ENSURE_HOOK_COMMAND;
+    })
+  );
 }
 
 /** Remove every marked hook entry; drop emptied containers. */
