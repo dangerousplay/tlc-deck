@@ -24,12 +24,20 @@ export const HOOK_EVENTS = [
   "SessionEnd",
 ] as const;
 export const HOOK_TIMEOUT_S = 2;
+export const ENSURE_HOOK_COMMAND = "tlc daemon ensure --quiet";
+export const ENSURE_HOOK_TIMEOUT_S = 5;
 
 export interface InstallOptions {
   hooks?: boolean;
   workflow?: boolean;
   panel?: boolean;
   otel?: boolean;
+  /** CLI entry for the systemd unit ExecStart (tests). */
+  cliPath?: string;
+  /** Install a user systemd unit instead of ensuring the daemon directly. */
+  systemd?: boolean;
+  /** Start the daemon after install (undefined = do not). */
+  ensure?: () => Promise<boolean>;
   dryRun?: boolean;
   env: Record<string, string | undefined>;
   stdout: (text: string) => void;
@@ -89,6 +97,18 @@ export function addHooks(settings: Json, url: string): Json {
   for (const ev of HOOK_EVENTS) {
     const list = Array.isArray(hooks[ev]) ? hooks[ev] : [];
     list.push({ hooks: [{ type: "http", url, timeout: HOOK_TIMEOUT_S, [MARKER]: true }] });
+    if (ev === "SessionStart") {
+      list.push({
+        hooks: [
+          {
+            type: "command",
+            command: ENSURE_HOOK_COMMAND,
+            timeout: ENSURE_HOOK_TIMEOUT_S,
+            [MARKER]: true,
+          },
+        ],
+      });
+    }
     hooks[ev] = list;
   }
   settings.hooks = hooks;
@@ -345,6 +365,57 @@ function installPanel(o: InstallOptions, remove: boolean): void {
   }
 }
 
+const UNIT_NAME = "tlc-deck.service";
+const unitPath = (env: InstallOptions["env"]) =>
+  join(home(env), ".config", "systemd", "user", UNIT_NAME);
+
+export function systemdUnit(cliPath: string, nodePath = process.execPath): string {
+  return `[Unit]
+Description=tlc-deck dashboard daemon
+
+[Service]
+ExecStart=${nodePath} ${cliPath} serve
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+function systemctl(o: InstallOptions, args: string[]): void {
+  const r = spawnSync("systemctl", ["--user", ...args], {
+    env: o.env as NodeJS.ProcessEnv,
+    encoding: "utf8",
+  });
+  if (r.error || r.status !== 0) {
+    o.stdout(
+      `systemd: systemctl --user ${args.join(" ")} failed: ${(r.error?.message ?? (r.stderr || r.stdout || `exit ${r.status}`)).trim()}\n`,
+    );
+  }
+}
+
+function installSystemd(o: InstallOptions): void {
+  const path = unitPath(o.env);
+  const cli = join(repoRootOfPackage(), "packages", "cli", "dist", "index.js");
+  o.stdout(`systemd: ${o.dryRun ? "would write" : "writing"} ${path}\n`);
+  if (o.dryRun) return;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, systemdUnit(o.cliPath ?? cli));
+  systemctl(o, ["enable", "--now", UNIT_NAME]);
+}
+
+function uninstallSystemd(o: InstallOptions): void {
+  const path = unitPath(o.env);
+  if (!existsSync(path)) {
+    o.stdout("systemd: nothing to remove\n");
+    return;
+  }
+  o.stdout(`systemd: ${o.dryRun ? "would remove" : "removing"} ${path}\n`);
+  if (o.dryRun) return;
+  systemctl(o, ["disable", "--now", UNIT_NAME]);
+  rmSync(path, { force: true });
+}
+
 /** With no component flag, `--hooks` and `--workflow` are installed. */
 function selected(o: InstallOptions) {
   const any = o.hooks || o.workflow || o.panel || o.otel;
@@ -353,15 +424,22 @@ function selected(o: InstallOptions) {
     workflow: any ? !!o.workflow : true,
     panel: !!o.panel,
     otel: !!o.otel,
+    systemd: !!o.systemd,
   };
 }
 
-export function installClaudeCode(o: InstallOptions): void {
+export async function installClaudeCode(o: InstallOptions): Promise<void> {
   const s = selected(o);
   if (s.hooks) installHooks(o);
   if (s.workflow) installWorkflow(o);
   if (s.panel) installPanel(o, false);
   if (s.otel) installOtel(o);
+  if (s.systemd) installSystemd(o);
+  else if (o.ensure && !o.dryRun) {
+    o.stdout(
+      `daemon: ${(await o.ensure()) ? "running" : "could not start (run `tlc daemon ensure`)"}\n`,
+    );
+  }
 }
 
 export function uninstallClaudeCode(o: InstallOptions): void {
@@ -370,4 +448,5 @@ export function uninstallClaudeCode(o: InstallOptions): void {
   if (s.workflow) uninstallWorkflow(o);
   if (s.panel) installPanel(o, true);
   if (s.otel) uninstallOtel(o);
+  if (s.systemd) uninstallSystemd(o);
 }

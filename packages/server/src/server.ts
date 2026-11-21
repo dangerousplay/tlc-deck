@@ -131,6 +131,15 @@ function defaultWebDist(): string {
   return resolve(new URL("../../../apps/web/dist", import.meta.url).pathname);
 }
 
+function serverVersion(): string {
+  try {
+    const raw = readFileSync(new URL("../package.json", import.meta.url), "utf8");
+    return (JSON.parse(raw) as { version?: string }).version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 export function stateDirOf(env: Record<string, string | undefined>): string {
   if (env.TLC_STATE_DIR) return env.TLC_STATE_DIR;
   const base = env.XDG_STATE_HOME || join(env.HOME || homedir(), ".local", "state");
@@ -345,6 +354,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
       return ok();
     });
   }
+  app.get("/api/health", (c) =>
+    c.json({ app: "tlc-deck", version: serverVersion(), pid: process.pid }),
+  );
   app.get("/api/otel", (c) => c.json({ spans: spanCounts }));
 
   app.get("/api/sessions", (c) => c.json(store.listSessions().map(present)));

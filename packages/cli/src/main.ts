@@ -47,10 +47,11 @@ const usage = `usage: tlc <command> [options]
   emit   --start [json] [--feature f]            print a new run id
   status [--feature f] [--run id] [--json]
   watch  [--feature f] [--run id]
-  serve  [--port 7317] [--repo path]... [--no-content]
-  install   claude-code [--hooks] [--workflow] [--panel] [--otel] [--dry-run]
+  serve  [--port 7317] [--repo path]... [--no-content] [--force]
+  daemon start|stop|status|ensure|restart [--quiet]
+  install   claude-code [--hooks] [--workflow] [--panel] [--otel] [--systemd] [--no-daemon] [--dry-run]
   uninstall claude-code [--hooks] [--workflow] [--panel] [--otel] [--dry-run]
-  run    [--feature f] [--harness h] [--only T1,T2] [--retries n] [--no-commit] [--resume] [--concurrency n]
+  run    [--feature f] [--harness h] [--only T1,T2] [--retries n] [--no-commit] [--resume] [--concurrency n] [--no-daemon]
   --version`;
 
 const OPTIONS = {
@@ -74,6 +75,10 @@ const OPTIONS = {
   otel: { type: "boolean" },
   "dry-run": { type: "boolean" },
   resume: { type: "boolean" },
+  force: { type: "boolean" },
+  quiet: { type: "boolean" },
+  systemd: { type: "boolean" },
+  "no-daemon": { type: "boolean" },
   repo: { type: "string", multiple: true },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
@@ -271,6 +276,25 @@ function cmdStatus(
   return 0;
 }
 
+function userAutoStartOff(io: Io, repo?: string): boolean {
+  const cfg = loadConfig({ repoDir: repo ?? io.cwd, env: io.env }).daemon as
+    | { autoStart?: unknown }
+    | undefined;
+  return cfg?.autoStart === false;
+}
+
+/** DMN-04: make sure the dashboard daemon runs, unless disabled. Never fails the command. */
+async function autoEnsure(repo: string, disabled: boolean, io: Io): Promise<void> {
+  // TLC_URL points at a custom (or disabled) server: not ours to start.
+  if (disabled || io.env.TLC_URL !== undefined || userAutoStartOff(io, repo)) return;
+  try {
+    const { ensureDaemon } = await import("./daemon.js");
+    await ensureDaemon({ env: io.env });
+  } catch {
+    // best effort
+  }
+}
+
 /** Run the CLI. Returns the process exit code (never calls process.exit). */
 export async function run(argv: string[], io: Io): Promise<number> {
   try {
@@ -290,7 +314,17 @@ export async function run(argv: string[], io: Io): Promise<number> {
       return values.help ? 0 : 2;
     }
     if (
-      !["plan", "emit", "status", "watch", "serve", "run", "install", "uninstall"].includes(command)
+      ![
+        "plan",
+        "emit",
+        "status",
+        "watch",
+        "serve",
+        "run",
+        "install",
+        "uninstall",
+        "daemon",
+      ].includes(command)
     ) {
       throw new CliError(`unknown command: ${command}\n${usage}`, 2);
     }
@@ -304,13 +338,31 @@ export async function run(argv: string[], io: Io): Promise<number> {
         workflow: values.workflow,
         panel: values.panel,
         otel: values.otel,
+        systemd: values.systemd,
         dryRun: values["dry-run"],
         env: io.env,
         stdout: io.stdout,
+        ensure:
+          values["no-daemon"] || userAutoStartOff(io) || io.env.TLC_URL !== undefined
+            ? undefined
+            : async () => {
+                const { ensureDaemon } = await import("./daemon.js");
+                return (await ensureDaemon({ env: io.env })).ok;
+              },
       };
-      if (command === "install") inst.installClaudeCode(opts);
+      if (command === "install") await inst.installClaudeCode(opts);
       else inst.uninstallClaudeCode(opts);
       return 0;
+    }
+    if (command === "daemon") {
+      const { runDaemon } = await import("./daemon.js");
+      return await runDaemon({
+        action: rest[0] ?? "",
+        quiet: values.quiet === true,
+        env: io.env,
+        stdout: io.stdout,
+        stderr: io.stderr,
+      });
     }
     if (command === "serve") {
       const port = values.port === undefined ? undefined : Number(values.port);
@@ -322,6 +374,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         port,
         repos: values.repo ?? [],
         noContent: values["no-content"] === true,
+        force: values.force === true,
         env: io.env,
         stdout: io.stdout,
         signal: io.signal,
@@ -329,6 +382,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
     }
     const repo = repoRoot(io.cwd);
     const feature = detectFeature(repo, values.feature);
+    if (command === "run" || command === "watch") {
+      await autoEnsure(repo, values["no-daemon"] === true, io);
+    }
     if (command === "run") {
       const num = (name: "retries" | "concurrency") => {
         const raw = values[name];

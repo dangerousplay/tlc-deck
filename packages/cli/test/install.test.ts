@@ -18,7 +18,7 @@ const wf = () => join(home, ".claude", "workflows", "tlc-execute.js");
 async function tlc(...argv: string[]) {
   const io: Io = {
     cwd: home,
-    env: { HOME: home, PATH: "" },
+    env: { HOME: home, PATH: "", TLC_URL: "off" },
     stdout: (t) => {
       out += t;
     },
