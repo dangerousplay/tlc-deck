@@ -1,10 +1,11 @@
 export const meta = {
   name: 'tlc-execute',
   description: 'Execute a tlc-spec-driven tasks.md with configurable models per role (orchestrator, implementer, reviewer, advisor); one commit per task; reports live progress through `tlc emit` when tlc is installed',
-  whenToUse: 'After Specify/Design/Tasks for a Large/Complex feature. args: {feature: "<name>"} or {tasks: ".specs/features/x/tasks.md"}; optional {repo: "/abs/path" (when not the session cwd), only: ["T1"], retries: 1, commit: true, roles: {implementer: "sonnet", reviewer: {model: "sonnet", effort: "high"}, advisor: "opus" | false, orchestrator: "haiku"}}. Config files (lower precedence than args): .specs/tlc-execute.json in the repo, then ~/.claude/tlc-execute.json',
+  whenToUse: 'After Specify/Design/Tasks for a Large/Complex feature. args: {feature: "<name>"} or {tasks: ".specs/features/x/tasks.md"}; optional {mode: "solo" (default when tlc is on PATH: one worker agent reuses its context across tasks) | "crew" (implementer/reviewer/advisor agents per task), repo: "/abs/path" (when not the session cwd), only: ["T1"], retries: 1, commit: true, roles: {implementer: "sonnet", reviewer: {model: "sonnet", effort: "high"}, advisor: "opus" | false, orchestrator: "haiku"}}. Config files (lower precedence than args): .specs/tlc-execute.json in the repo, then ~/.claude/tlc-execute.json',
   phases: [
     { title: 'Load', detail: 'orchestrator role parses tasks.md and the role config' },
-    { title: 'Implement', detail: 'implementer role (spec-implementer) per task, [P] tasks in parallel' },
+    { title: 'Solo', detail: 'mode solo: a single implementer agent loops tlc next/gate/review/commit over all tasks' },
+    { title: 'Implement', detail: 'mode crew: implementer role (spec-implementer) per task, [P] tasks in parallel' },
     { title: 'Verify', detail: 'reviewer role (spec-reviewer) checks Done-when + gate' },
     { title: 'Advise', detail: 'advisor role diagnoses a rejected or blocked task before the retry' },
     { title: 'Commit', detail: 'orchestrator role makes one atomic commit per task' },
@@ -82,9 +83,10 @@ const TASK_LIST = {
     },
     project_config: { type: 'string', description: 'verbatim contents of .specs/tlc-execute.json, or empty string if absent' },
     user_config: { type: 'string', description: 'verbatim contents of ~/.claude/tlc-execute.json, or empty string if absent' },
+    tlc_available: { type: 'boolean', description: 'true if `command -v tlc` succeeds' },
     run_id: { type: 'string', description: 'run id printed by `tlc emit --start`, or empty string if tlc is unavailable or failed' },
   },
-  required: ['tasks', 'project_config', 'user_config', 'run_id'],
+  required: ['tasks', 'project_config', 'user_config', 'run_id', 'tlc_available'],
 }
 
 const IMPL = {
@@ -141,6 +143,7 @@ const loadInput = { tasksPath: TASKS_PATH, harness: 'claude-code', ...(REPO ? { 
 const parsed = await ag(
   `Read ${TASKS_PATH}. List every task with its id, title, dependencies (task ids), whether it is marked [P] (parallel-safe), and whether it is already complete. Do not summarize task bodies.
 If the \`tlc\` command is on PATH, get the task list from \`tlc plan --feature ${FEATURE} --json\` instead of parsing the file by hand (dependsOn -> depends_on; done flag as given); otherwise parse the file as described.
+Also run \`command -v tlc\` and return tlc_available (true if it prints a path).
 Also return the verbatim text of these files if they exist (empty string if not): ".specs/tlc-execute.json" (relative to the repo root) as project_config, and "~/.claude/tlc-execute.json" as user_config.
 
 Progress reporting (only if \`tlc\` is on PATH; otherwise skip and return run_id as an empty string; never let a failure change your result):
@@ -157,11 +160,15 @@ const userCfg = parseCfg(parsed.user_config, '~/.claude/tlc-execute.json')
 const projCfg = parseCfg(parsed.project_config, '.specs/tlc-execute.json')
 ROLES = merge(userCfg.roles, projCfg.roles, a.roles)
 const RETRIES = a.retries ?? projCfg.retries ?? userCfg.retries ?? 1
+// Mode: args > project config > user config > "solo". Solo needs the tlc helpers; otherwise crew.
+const MODE_WANTED = a.mode ?? projCfg.mode ?? userCfg.mode ?? 'solo'
+const SOLO = MODE_WANTED !== 'crew' && !!parsed.tlc_available
+if (MODE_WANTED !== 'crew' && !SOLO) log('tlc not on PATH: falling back to crew mode')
 const COMMIT = a.commit ?? projCfg.commit ?? userCfg.commit ?? true
 // Trailer line ending every task commit (e.g. "Co-Authored-By: ..."); empty string = none.
 const TRAILER = a.trailer ?? projCfg.commitTrailer ?? userCfg.commitTrailer ?? ''
 const show = r => (r === false ? 'off' : `${r.model || 'inherit'}${r.effort ? `/${r.effort}` : ''}`)
-log(`roles: ${Object.entries(ROLES).map(([k, v]) => `${k}=${show(v)}`).join(', ')}; retries=${RETRIES}; commit=${COMMIT}`)
+log(`roles: ${Object.entries(ROLES).map(([k, v]) => `${k}=${show(v)}`).join(', ')}; retries=${RETRIES}; commit=${COMMIT}; mode=${SOLO ? 'solo' : 'crew'}`)
 
 let tasks = parsed.tasks.filter(t => !t.done)
 if (a.only) tasks = tasks.filter(t => a.only.includes(t.id))
@@ -169,6 +176,43 @@ log(`${tasks.length} pending task(s) in ${TASKS_PATH}`)
 
 const doneIds = new Set(parsed.tasks.filter(t => t.done).map(t => t.id))
 const results = []
+
+// ---------- solo mode: one worker agent, context reused across tasks ----------
+const SOLO_RESULT = {
+  type: 'object',
+  properties: {
+    completed: { type: 'array', items: { type: 'string' } },
+    failed: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { id: { type: 'string' }, status: { type: 'string' }, issues: { type: 'array', items: { type: 'string' } } },
+        required: ['id', 'status', 'issues'],
+      },
+    },
+    blocked: { type: 'array', items: { type: 'string' }, description: 'ids of tasks left unstarted because a dependency failed or the loop stopped' },
+    deviations: { type: 'array', items: { type: 'string' } },
+    gates: { type: 'array', items: { type: 'string' }, description: 'one "<id>: <gate summary>" per completed task' },
+  },
+  required: ['completed', 'failed', 'blocked', 'deviations', 'gates'],
+}
+
+const soloPrompt = () => `You are the single worker for the feature "${FEATURE}" (tasks: ${TASKS_PATH}). Work through ALL pending tasks yourself, one after another, in this one conversation, so you keep context between tasks. Read the spec, design and context files in the feature folder once, at the start.${a.only ? ` Only these tasks: ${a.only.join(', ')} (ignore the others).` : ''}
+
+Loop until \`tlc next\` prints {"done": true}:
+1. Run \`tlc next --feature ${FEATURE} --json\`. It returns the next runnable task (id, title, block). If it reports "waiting" (nothing runnable), stop the loop.
+2. Implement exactly that task: no scope expansion, no redesign. Write the tests the task lists. Note small deviations as SPEC_DEVIATION.
+3. Run \`tlc gate <id> --feature ${FEATURE}\`. If it fails, fix and re-run, at most ${RETRIES + 1} rounds.
+4. Run \`tlc review <id> --feature ${FEATURE}\` (an independent reviewer). If it rejects (exit 1), fix only the findings, then run the gate and review again, at most ${RETRIES} fix rounds.
+${COMMIT ? `5. Run \`tlc commit <id> --feature ${FEATURE}\` (it creates the deterministic commit). Never run git commit yourself.` : '5. Do NOT commit; leave the changes in the working tree.'}
+If a task still fails after the retries or is blocked, run \`tlc emit CUSTOM '{"value":{"id":"<id>-blocked","task":"<id>","kind":"blocked","reason":"<one line>"}}' --feature ${FEATURE} --harness claude-code --driver workflow --source implementer --name tlc.blocker\` (add --run ${RUN_ID || '<run id from tlc next>'}), record it as failed, and continue with tasks that do not depend on it.
+
+Finish by returning: completed (ids), failed ({id, status, issues}), blocked (ids of tasks not started), deviations, gates ("<id>: <gate summary>" per completed task).`
+
+async function runSolo() {
+  const r = await ag(soloPrompt(), opts('implementer', { label: 'solo worker', phase: 'Solo', agentType: 'spec-implementer', schema: SOLO_RESULT }))
+  return r || { completed: [], failed: [], blocked: tasks.map(t => t.id), deviations: [], gates: [] }
+}
 
 async function advise(t, base, impl, verdict, n) {
   if (ROLES.advisor === false) return null
@@ -242,55 +286,70 @@ async function runTask(t, mayCommit) {
   return { task: t, impl, verdict, ok: !!(impl && impl.status === 'Complete' && verdict && verdict.pass) }
 }
 
-// Dependency waves. Within a wave, [P] tasks run concurrently; non-[P] tasks run one at a time.
 let pending = tasks.slice()
-let stop = false
-while (pending.length && !stop) {
-  const ready = pending.filter(t => t.depends_on.every(d => doneIds.has(d) || !parsed.tasks.some(x => x.id === d)))
-  if (!ready.length) {
-    log(`Stopped: unmet dependencies for ${pending.map(t => t.id).join(', ')}`)
-    break
-  }
-  const par = ready.filter(t => t.parallel)
-  const seq = ready.filter(t => !t.parallel)
-  const wave = []
-  if (par.length) wave.push(...(await parallel(par.map(t => () => runTask(t, COMMIT)))).filter(Boolean))
-  for (const t of seq) {
-    const r = await runTask(t, COMMIT)
-    wave.push(r)
-    if (!r.ok) break // later sequential tasks in this wave may depend on it implicitly
-  }
-  if (wave.length < ready.length && wave.every(r => r.ok)) { log('An implementer crashed; stopping'); stop = true }
-
-  // Commit sequentially to avoid git index races between parallel implementers.
-  for (const r of wave) {
-    results.push(r)
-    if (!r.ok) { stop = true; continue }
-    doneIds.add(r.task.id)
-    const t = r.task
-    if (COMMIT && r.impl.files_changed.length) {
-      await ag(
-        `Create one git commit containing ONLY these files: ${r.impl.files_changed.join(' ')}. Use \`git add -- <files>\` (new files too). Before committing, run \`git status --short\`: if an untracked or modified file is clearly part of this task (inside its Where paths, or a source file the listed files import) and not in the list, add it as well and mention it. Commit with a Conventional Commits message for task ${r.task.id}: "${r.task.title}" ending with "(${r.task.id})" in the subject.${TRAILER ? ` End the message body with exactly this trailer line and no other Co-Authored-By line: ${TRAILER}` : ' Add no Co-Authored-By trailer.'} Do not touch unrelated files. Reply with the commit hash.${progress([
-          ...start([step('orchestrator', 'STEP_STARTED', t, 'commit')]),
-          ...end([
-            custom('orchestrator', 'tlc.task', { id: t.id, status: 'done', stage: 'commit', commit: '<commit sha>', files: r.impl.files_changed }),
-            step('orchestrator', 'STEP_FINISHED', t, 'commit'),
-          ]),
-        ])}`,
-        opts('orchestrator', { label: `commit ${r.task.id}`, phase: 'Commit' }),
-      )
-    } else if (RUN_ID) {
-      await ag(
-        `Run this one Bash command (skip silently if the \`tlc\` command is missing or fails), then reply "ok": ${custom('orchestrator', 'tlc.task', { id: t.id, status: 'done', files: r.impl.files_changed })}`,
-        opts('orchestrator', { label: `report ${t.id}`, phase: 'Commit' }),
-      )
+let soloOut = null
+async function runCrew() {
+  // Dependency waves. Within a wave, [P] tasks run concurrently; non-[P] tasks run one at a time.
+  let stop = false
+  while (pending.length && !stop) {
+    const ready = pending.filter(t => t.depends_on.every(d => doneIds.has(d) || !parsed.tasks.some(x => x.id === d)))
+    if (!ready.length) {
+      log(`Stopped: unmet dependencies for ${pending.map(t => t.id).join(', ')}`)
+      break
     }
-  }
-  pending = pending.filter(t => !wave.some(r => r.task.id === t.id))
-  if (stop) log('Stopped after a failed/blocked task; fix or re-plan, then rerun with {only: [...]}')
-}
+    const par = ready.filter(t => t.parallel)
+    const seq = ready.filter(t => !t.parallel)
+    const wave = []
+    if (par.length) wave.push(...(await parallel(par.map(t => () => runTask(t, COMMIT)))).filter(Boolean))
+    for (const t of seq) {
+      const r = await runTask(t, COMMIT)
+      wave.push(r)
+      if (!r.ok) break // later sequential tasks in this wave may depend on it implicitly
+    }
+    if (wave.length < ready.length && wave.every(r => r.ok)) { log('An implementer crashed; stopping'); stop = true }
 
-const result = {
+    // Commit sequentially to avoid git index races between parallel implementers.
+    for (const r of wave) {
+      results.push(r)
+      if (!r.ok) { stop = true; continue }
+      doneIds.add(r.task.id)
+      const t = r.task
+      if (COMMIT && r.impl.files_changed.length) {
+        await ag(
+          `Create one git commit containing ONLY these files: ${r.impl.files_changed.join(' ')}. Use \`git add -- <files>\` (new files too). Before committing, run \`git status --short\`: if an untracked or modified file is clearly part of this task (inside its Where paths, or a source file the listed files import) and not in the list, add it as well and mention it. Commit with a Conventional Commits message for task ${r.task.id}: "${r.task.title}" ending with "(${r.task.id})" in the subject.${TRAILER ? ` End the message body with exactly this trailer line and no other Co-Authored-By line: ${TRAILER}` : ' Add no Co-Authored-By trailer.'} Do not touch unrelated files. Reply with the commit hash.${progress([
+            ...start([step('orchestrator', 'STEP_STARTED', t, 'commit')]),
+            ...end([
+              custom('orchestrator', 'tlc.task', { id: t.id, status: 'done', stage: 'commit', commit: '<commit sha>', files: r.impl.files_changed }),
+              step('orchestrator', 'STEP_FINISHED', t, 'commit'),
+            ]),
+          ])}`,
+          opts('orchestrator', { label: `commit ${r.task.id}`, phase: 'Commit' }),
+        )
+      } else if (RUN_ID) {
+        await ag(
+          `Run this one Bash command (skip silently if the \`tlc\` command is missing or fails), then reply "ok": ${custom('orchestrator', 'tlc.task', { id: t.id, status: 'done', files: r.impl.files_changed })}`,
+          opts('orchestrator', { label: `report ${t.id}`, phase: 'Commit' }),
+        )
+      }
+    }
+    pending = pending.filter(t => !wave.some(r => r.task.id === t.id))
+    if (stop) log('Stopped after a failed/blocked task; fix or re-plan, then rerun with {only: [...]}')
+  }
+}
+if (SOLO) soloOut = await runSolo()
+else await runCrew()
+
+const result = soloOut
+  ? {
+      tasks_path: TASKS_PATH,
+      roles: Object.fromEntries(Object.entries(ROLES).map(([k, v]) => [k, show(v)])),
+      completed: soloOut.completed,
+      failed: soloOut.failed.map(f => ({ id: f.id, status: f.status, issues: f.issues, review_problems: [] })),
+      not_started: soloOut.blocked,
+      spec_deviations: soloOut.deviations,
+      gates: soloOut.gates,
+    }
+  : {
   tasks_path: TASKS_PATH,
   roles: Object.fromEntries(Object.entries(ROLES).map(([k, v]) => [k, show(v)])),
   completed: results.filter(r => r.ok).map(r => r.task.id),

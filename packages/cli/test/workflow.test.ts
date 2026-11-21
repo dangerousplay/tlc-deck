@@ -20,7 +20,7 @@ const body = source.replace("export const meta", "const meta");
 
 type Call = { prompt: string; opts: Record<string, unknown> };
 
-async function stubRun(args: Record<string, unknown>, withTlc = true) {
+async function stubRun(args: Record<string, unknown>, withTlc = true, userConfig = "") {
   const calls: Call[] = [];
   const logs: string[] = [];
   const phases: string[] = [];
@@ -34,7 +34,21 @@ async function stubRun(args: Record<string, unknown>, withTlc = true) {
     calls.push({ prompt, opts });
     const label = String(opts.label ?? "");
     if (label === "parse tasks.md")
-      return { tasks, project_config: "", user_config: "", run_id: withTlc ? "tlc_RUN1" : "" };
+      return {
+        tasks,
+        project_config: "",
+        user_config: userConfig,
+        run_id: withTlc ? "tlc_RUN1" : "",
+        tlc_available: withTlc,
+      };
+    if (label === "solo worker")
+      return {
+        completed: ["T1", "T2", "T3"],
+        failed: [],
+        blocked: [],
+        deviations: [],
+        gates: ["T1: pass", "T2: pass", "T3: pass"],
+      };
     if (label.startsWith("impl") || label.startsWith("fix"))
       return {
         status: "Complete",
@@ -82,7 +96,7 @@ test("script has valid syntax and no clock, random, fs or env use", () => {
 });
 
 test("stub run of a 3-task plan with one rejection emits the expected commands", async () => {
-  const { calls, result } = await stubRun({ feature: "demo", repo: "/r" });
+  const { calls, result } = await stubRun({ feature: "demo", repo: "/r", mode: "crew" });
   expect(Object.keys(result as object)).toEqual([
     "tasks_path",
     "roles",
@@ -135,9 +149,42 @@ test("stub run of a 3-task plan with one rejection emits the expected commands",
 });
 
 test("without tlc the prompts carry no emit instructions", async () => {
-  const { calls, result } = await stubRun({ feature: "demo" }, false);
+  const { calls, result } = await stubRun({ feature: "demo", mode: "crew" }, false);
   expect((result as { completed: string[] }).completed).toEqual(["T1", "T2", "T3"]);
   const stage = calls.filter((c) => /^(impl|verify|advise|fix|commit)/.test(String(c.opts.label)));
   for (const c of stage) expect(c.prompt).not.toContain("tlc emit");
   expect(calls.some((c) => c.opts.label === "finish run")).toBe(false);
+});
+
+test("solo is the default with tlc: one worker agent, then the result shape", async () => {
+  const { calls, result } = await stubRun({ feature: "demo", repo: "/r" });
+  const worker = calls.filter((c) => c.opts.phase === "Solo");
+  expect(worker).toHaveLength(1);
+  expect(worker[0]?.opts.model).toBe("sonnet");
+  expect(worker[0]?.prompt).toContain("tlc next --feature demo --json");
+  expect(worker[0]?.prompt).toContain("tlc gate <id>");
+  expect(worker[0]?.prompt).toContain("tlc review <id>");
+  expect(worker[0]?.prompt).toContain("tlc commit <id>");
+  // Load + worker + finish run only
+  expect(calls.map((c) => c.opts.label)).toEqual(["parse tasks.md", "solo worker", "finish run"]);
+  expect(Object.keys(result as object)).toEqual([
+    "tasks_path",
+    "roles",
+    "completed",
+    "failed",
+    "not_started",
+    "spec_deviations",
+    "gates",
+  ]);
+  expect((result as { completed: string[] }).completed).toEqual(["T1", "T2", "T3"]);
+});
+
+test("config mode crew, and missing tlc, both run the crew path", async () => {
+  const cfg = await stubRun({ feature: "demo" }, true, JSON.stringify({ mode: "crew" }));
+  expect(cfg.calls.some((c) => c.opts.label === "solo worker")).toBe(false);
+  expect(cfg.calls.some((c) => c.opts.label === "impl T1")).toBe(true);
+  const noTlc = await stubRun({ feature: "demo" }, false);
+  expect(noTlc.calls.some((c) => c.opts.label === "solo worker")).toBe(false);
+  expect(noTlc.logs.some((l) => l.includes("falling back to crew"))).toBe(true);
+  expect((noTlc.result as { completed: string[] }).completed).toEqual(["T1", "T2", "T3"]);
 });
