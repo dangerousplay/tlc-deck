@@ -498,6 +498,61 @@ export async function runSolo(ctx: ConductorCtx): Promise<void> {
   }
 }
 
+export interface ReviewInput {
+  repo: string;
+  tasksMd: string;
+  id: string;
+  files: string[];
+  driver: Driver;
+  model?: string;
+  effort?: string;
+  signal?: AbortSignal;
+  onItem?: (it: StreamItem) => void;
+}
+
+export interface ReviewResult {
+  verdict: "pass" | "reject";
+  findings: string[];
+  usage?: DriverResult["usage"];
+}
+
+/** Reviewer call shared by the conductor-less helpers (`tlc review`). Throws on driver or output failure. */
+export async function runReview(input: ReviewInput): Promise<ReviewResult> {
+  const block = taskBlock(input.tasksMd, input.id) ?? `### ${input.id}`;
+  const diff = await taskDiff(input.repo, changedFiles(input.files, block));
+  const res = await input.driver.run({
+    role: "reviewer",
+    prompt: renderPrompt("solo-review", { task: block, diff }),
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.effort ? { effort: input.effort } : {}),
+    cwd: input.repo,
+    schema: reviewerOutputJsonSchema,
+    ...(input.onItem ? { onItem: input.onItem } : {}),
+    ...(input.signal ? { signal: input.signal } : {}),
+  });
+  if (res.exitCode !== 0) throw new Error(`reviewer exited with code ${res.exitCode}`);
+  const parsed = ReviewerOutputSchema.safeParse(res.data);
+  if (!parsed.success) throw new Error("reviewer returned invalid output");
+  return { ...parsed.data, ...(res.usage ? { usage: res.usage } : {}) };
+}
+
+/** Deterministic task commit (DD-01 message) of the reported files plus the Where paths. */
+export function commitTask(input: {
+  repo: string;
+  tasksMd: string;
+  plan?: Plan;
+  id: string;
+  files: string[];
+  trailer?: string;
+}): Promise<string | undefined> {
+  const block = taskBlock(input.tasksMd, input.id) ?? "";
+  return commitFiles({
+    cwd: input.repo,
+    files: changedFiles(input.files, block),
+    message: commitMessage(input.tasksMd, input.id, input.trailer, input.plan),
+  });
+}
+
 /** Worker-reported files plus the task's Where paths (commitFiles keeps only changed ones). */
 function changedFiles(reported: string[], block: string): string[] {
   return [...new Set([...reported, ...wherePaths(block)])];

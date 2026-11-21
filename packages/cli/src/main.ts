@@ -48,6 +48,10 @@ const usage = `usage: tlc <command> [options]
   status [--feature f] [--run id] [--json]
   watch  [--feature f] [--run id]
   serve  [--port 7317] [--repo path]... [--no-content] [--force]
+  next   [--feature f] [--json]
+  gate   <T> [--feature f]
+  review <T> [--feature f] [--harness h] [--model m]
+  commit <T> [--feature f]
   daemon start|stop|status|ensure|restart [--quiet]
   install   claude-code [--hooks] [--workflow] [--panel] [--otel] [--systemd] [--no-daemon] [--dry-run]
   uninstall claude-code [--hooks] [--workflow] [--panel] [--otel] [--dry-run]
@@ -68,6 +72,7 @@ const OPTIONS = {
   retries: { type: "string" },
   concurrency: { type: "string" },
   mode: { type: "string" },
+  model: { type: "string" },
   "no-commit": { type: "boolean" },
   "no-content": { type: "boolean" },
   hooks: { type: "boolean" },
@@ -325,6 +330,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
         "install",
         "uninstall",
         "daemon",
+        "next",
+        "gate",
+        "review",
+        "commit",
       ].includes(command)
     ) {
       throw new CliError(`unknown command: ${command}\n${usage}`, 2);
@@ -383,7 +392,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     }
     const repo = repoRoot(io.cwd);
     const feature = detectFeature(repo, values.feature);
-    if (command === "run" || command === "watch") {
+    if (command === "run" || command === "watch" || command === "next") {
       await autoEnsure(repo, values["no-daemon"] === true, io);
     }
     if (command === "run") {
@@ -418,6 +427,34 @@ export async function run(argv: string[], io: Io): Promise<number> {
         signal: io.signal,
         driverFactory: io.driverFactory,
       });
+    }
+    if (command === "next" || command === "gate" || command === "review" || command === "commit") {
+      const h = {
+        repo,
+        feature,
+        task: rest[0],
+        json: values.json === true,
+        env: io.env,
+        stdout: io.stdout,
+        stderr: io.stderr,
+      };
+      if (command === "next") return (await import("./commands/next.js")).runNext(h);
+      if (command === "gate") {
+        return await (await import("./commands/gate.js")).runGateCommand({
+          ...h,
+          signal: io.signal,
+        });
+      }
+      if (command === "review") {
+        return await (await import("./commands/review.js")).runReviewCommand({
+          ...h,
+          harness: values.harness,
+          model: values.model,
+          driverFactory: io.driverFactory,
+          signal: io.signal,
+        });
+      }
+      return await (await import("./commands/commit.js")).runCommitCommand(h);
     }
     if (command === "plan") return cmdPlan(repo, feature, values.json === true, io);
     if (command === "watch") {
