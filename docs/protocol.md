@@ -20,13 +20,13 @@ Unknown event types and unknown fields are ignored by readers.
 
 ## Standard events
 
-| Type                             | Use                                                                                             |
-| -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `RUN_STARTED`                    | Run begins; `input` holds `feature`, `tasksPath`, `roles`, `harness` and optionally `repoPath`. |
-| `RUN_FINISHED`                   | Run ended normally (failed tasks are reported through task and blocker events).                 |
-| `RUN_ERROR`                      | Run aborted; `code: "interrupted"` for SIGINT/SIGTERM.                                          |
-| `STEP_STARTED` / `STEP_FINISHED` | `stepName` is `<task>:<stage>`; stage is `implement`, `verify`, `advise`, `fix` or `commit`.    |
-| `STATE_SNAPSHOT`                 | First SSE message: `{runs, sessions}`.                                                          |
+| Type                             | Use                                                                                                  |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `RUN_STARTED`                    | Run begins; `input` holds `feature`, `tasksPath`, `roles`, `harness` and optionally `repoPath`.      |
+| `RUN_FINISHED`                   | Run ended normally (failed tasks are reported through task and blocker events).                      |
+| `RUN_ERROR`                      | Run aborted; `code: "interrupted"` for SIGINT/SIGTERM.                                               |
+| `STEP_STARTED` / `STEP_FINISHED` | `stepName` is `<task>:<stage>`; stage is `implement`, `gate`, `verify`, `advise`, `fix` or `commit`. |
+| `STATE_SNAPSHOT`                 | First SSE message: `{runs, sessions}`.                                                               |
 
 ## Custom events (`type: "CUSTOM"`, `name`, `value`)
 
@@ -74,7 +74,9 @@ gate, deviations, issues), reviewer (`verdict`: pass\|reject, findings) and advi
 ## Agents (agent-live)
 
 `AgentInfo`: `{id, source: claude-code|tlc-run, sessionId?, workflowId?, runId?, task?, stage?, role?,
-label?, harness, model?, status: running|done|error, startedAt, endedAt?, usage?}`.
+label?, harness, model?, status: running|done|error, startedAt, endedAt?, usage?, tasks?}`.
+In solo mode one `worker` agent spans several tasks: `tasks` lists the task ids it handled (`task`/`stage`
+describe the current one). The `gate` stage covers the conductor running a task's gate command.
 
 `AgentItem`: `{agentId, seq, ts, kind: prompt|text|tool_call|tool_result|error|status, text?, tool?,
 toolUseId?, input?, output?, isError?, truncated?, fullLength?}`. Tool results are paired with calls

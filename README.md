@@ -33,24 +33,57 @@ Screenshots: _placeholder (dashboard, watch view)_.
 
 ## Commands
 
-| Command                                                                                                       | Purpose                                                                                                                                                      |
-| ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `tlc plan [--feature f] [--json]`                                                                             | Parse `tasks.md` (+ `spec.md`): tasks, `[P]`, dependencies, milestones, waves.                                                                               |
-| `tlc emit <type> [json] [--run id] [--feature f] [--harness h] [--driver d] [--source s] [--name n]`          | Append one protocol event to `progress.ndjson` and POST it to the server (best effort, exits 0 when the server is down). Exit 2 on invalid input.            |
-| `tlc emit --start [json] [--feature f]`                                                                       | Emit `RUN_STARTED` and print the new run id (`tlc_<ULID>`). `$TLC_RUN`, `$TLC_HARNESS`, `$TLC_DRIVER`, `$TLC_SOURCE` supply defaults.                        |
-| `tlc status [--feature f] [--run id] [--json]`                                                                | Folded state of a run (latest by default).                                                                                                                   |
-| `tlc watch [--feature f] [--run id]`                                                                          | Live terminal view; plain text when stdout is not a TTY.                                                                                                     |
-| `tlc serve [--port 7317] [--repo path]... [--no-content]`                                                     | Local server: ingests `progress.ndjson` of registered repos, Claude Code hooks and OTLP, serves the dashboard. `--no-content` drops prompts and tool inputs. |
-| `tlc run [--feature f] [--harness h] [--only T1,T2] [--retries n] [--no-commit] [--resume] [--concurrency n]` | Headless runner: implement, verify (reviewer), advise on failure, commit per task. Exit 130 when interrupted.                                                |
-| `tlc install claude-code [--hooks] [--otel] [--workflow] [--panel] [--dry-run]`                               | Configure Claude Code integration.                                                                                                                           |
-| `tlc uninstall claude-code [same flags]`                                                                      | Revert the above.                                                                                                                                            |
-| `tlc --version`                                                                                               | Print the version.                                                                                                                                           |
+| Command                                                                                                                                         | Purpose                                                                                                                                                      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `tlc plan [--feature f] [--json]`                                                                                                               | Parse `tasks.md` (+ `spec.md`): tasks, `[P]`, dependencies, milestones, waves.                                                                               |
+| `tlc emit <type> [json] [--run id] [--feature f] [--harness h] [--driver d] [--source s] [--name n]`                                            | Append one protocol event to `progress.ndjson` and POST it to the server (best effort, exits 0 when the server is down). Exit 2 on invalid input.            |
+| `tlc emit --start [json] [--feature f]`                                                                                                         | Emit `RUN_STARTED` and print the new run id (`tlc_<ULID>`). `$TLC_RUN`, `$TLC_HARNESS`, `$TLC_DRIVER`, `$TLC_SOURCE` supply defaults.                        |
+| `tlc status [--feature f] [--run id] [--json]`                                                                                                  | Folded state of a run (latest by default).                                                                                                                   |
+| `tlc watch [--feature f] [--run id]`                                                                                                            | Live terminal view; plain text when stdout is not a TTY.                                                                                                     |
+| `tlc serve [--port 7317] [--repo path]... [--no-content]`                                                                                       | Local server: ingests `progress.ndjson` of registered repos, Claude Code hooks and OTLP, serves the dashboard. `--no-content` drops prompts and tool inputs. |
+| `tlc run [--feature f] [--mode solo\|crew] [--harness h] [--only T1,T2] [--retries n] [--no-commit] [--resume] [--concurrency n] [--no-daemon]` | Headless runner (default `solo`, see Run modes). Exit 130 when interrupted.                                                                                  |
+| `tlc next \| gate <T> \| review <T> \| commit <T>`                                                                                              | Helpers for in-session agents (see Helper commands).                                                                                                         |
+| `tlc daemon start\|stop\|status\|ensure\|restart`                                                                                               | Manage the single per-user dashboard daemon (see Daemon).                                                                                                    |
+| `tlc install claude-code [--hooks] [--otel] [--workflow] [--panel] [--dry-run]`                                                                 | Configure Claude Code integration.                                                                                                                           |
+| `tlc uninstall claude-code [same flags]`                                                                                                        | Revert the above.                                                                                                                                            |
+| `tlc --version`                                                                                                                                 | Print the version.                                                                                                                                           |
 
 Environment: `TLC_URL` (server base URL for `emit`, default `http://127.0.0.1:7317`, `off` disables),
 `TLC_PORT`, `TLC_STATE_DIR` (server state, default under `$XDG_STATE_HOME/tlc-deck`).
 
 Roles (orchestrator, implementer, reviewer, advisor) are configured in `~/.claude/tlc-execute.json`,
 overridden by `<repo>/.specs/tlc-execute.json`.
+
+## Run modes
+
+- `solo` (default, config `mode` or `--mode solo`): a conductor in code schedules tasks in dependency
+  order and sends each one as a new turn to a single worker session that is resumed by id, so the
+  worker keeps its context. After each turn the conductor runs the task gate (failures go back to the
+  worker as fix turns, up to `retries`), then a fresh read-only reviewer (default claude haiku) checks
+  Done-when against `git diff`; rejections become fix turns. The conductor makes the commit itself
+  (deterministic message + `commitTrailer`). A fresh worker primed with a handoff summary starts when
+  the harness cannot resume or the last turn used more than `rotateAfterTokens` (default 150000)
+  input tokens.
+- `crew` (`--mode crew`): the previous flow with a new agent per stage and task; supports `--concurrency`.
+
+## Helper commands
+
+For agents working inside a session (used by the Claude Code workflow in solo mode); they work without
+the daemon and record events in `progress.ndjson`:
+
+- `tlc next [--feature f] [--json]`: next runnable task with its block and run id, or `{"done": true}`.
+- `tlc gate <T>`: run the task gate, emit STEP events, exit with the command status.
+- `tlc review <T> [--harness h --model m]`: run the reviewer, print `{verdict, findings}`; exit 1 on reject.
+- `tlc commit <T>`: deterministic commit, marks the task done, prints the sha.
+
+## Daemon
+
+One dashboard daemon per user. `tlc daemon ensure` reuses a healthy daemon (`GET /api/health`) or starts
+a detached `tlc serve` (pidfile and `daemon.log` in the state dir); concurrent calls start at most one.
+`tlc serve` refuses to start when one already answers unless `--force`. `tlc install claude-code` runs
+`ensure` and adds a SessionStart hook `tlc daemon ensure --quiet`; `tlc run`, `tlc watch` and `tlc next`
+ensure it too unless `--no-daemon` or `daemon.autoStart: false`. `tlc install claude-code --systemd`
+writes and enables a user unit instead.
 
 ## Claude Code setup
 
