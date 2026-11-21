@@ -146,7 +146,7 @@ test("serve + run: SSE sees the whole run, status matches, hooks link a session"
   );
 
   let out = "";
-  const code = await run(["run", "--no-commit"], {
+  const code = await run(["run", "--mode", "crew", "--no-commit"], {
     cwd: repo,
     env,
     stdout: (t) => {

@@ -27,6 +27,14 @@ import {
   statusOutputJsonSchema,
   type TaskValue,
 } from "@tlc-deck/protocol";
+import {
+  type ConductorCtx,
+  DEFAULT_ROTATE_AFTER_TOKENS,
+  Interrupted,
+  runSolo,
+  TaskFailed,
+  waves,
+} from "./conductor.js";
 import type { Driver, DriverFactory, DriverResult, Role } from "./driver.js";
 import { createDriverFactory, type DriverConfig } from "./drivers/index.js";
 import { commitFiles } from "./git.js";
@@ -54,6 +62,10 @@ export interface RunOptions {
   concurrency?: number;
   /** Set false to skip the advise stage. Default true. */
   advisor?: boolean;
+  /** "solo" (default): conductor + one worker session; "crew": one agent per stage. */
+  mode?: "solo" | "crew";
+  /** Solo: start a fresh worker session after a turn above this many input tokens. Default 150000. */
+  rotateAfterTokens?: number;
   env?: Record<string, string | undefined>;
   driverFactory?: DriverFactory;
   signal?: AbortSignal;
@@ -69,24 +81,7 @@ export interface RunResult {
   interrupted: boolean;
 }
 
-class Interrupted extends Error {}
-class TaskFailed extends Error {}
-
 const ulidish = () => randomBytes(13).toString("hex").toUpperCase();
-
-function waves(tasks: PlanTask[]): PlanTask[][] {
-  const layer = new Map<string, number>();
-  let rest = tasks.slice();
-  const out: PlanTask[][] = [];
-  while (rest.length) {
-    const ready = rest.filter((t) => t.dependsOn.every((d) => layer.has(d)));
-    if (!ready.length) break; // parsePlan already rejects cycles
-    for (const t of ready) layer.set(t.id, out.length);
-    out.push(ready);
-    rest = rest.filter((t) => !layer.has(t.id));
-  }
-  return out;
-}
 
 async function pool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
   let next = 0;
@@ -124,6 +119,13 @@ export async function runPlan(opts: RunOptions): Promise<RunResult> {
     );
   const defaultHarness = opts.harness ?? "claude";
   const retries = opts.retries ?? 2;
+  const mode: "solo" | "crew" =
+    opts.mode ?? (config.mode === "crew" || config.mode === "solo" ? config.mode : "solo");
+  const rotateAfterTokens =
+    opts.rotateAfterTokens ??
+    (typeof config.rotateAfterTokens === "number"
+      ? config.rotateAfterTokens
+      : DEFAULT_ROTATE_AFTER_TOKENS);
   const advisorOn = opts.advisor !== false;
   const log = opts.log ?? (() => {});
   const trailer = typeof config.commitTrailer === "string" ? config.commitTrailer : undefined;
@@ -166,6 +168,7 @@ export async function runPlan(opts: RunOptions): Promise<RunResult> {
       tasksPath: join(".specs", "features", feature, "tasks.md"),
       roles: config.roles,
       harness: defaultHarness,
+      mode,
       repoPath: resolve(repo),
       ...(only ? { only: [...only] } : {}),
     },
@@ -509,7 +512,38 @@ export async function runPlan(opts: RunOptions): Promise<RunResult> {
     }
   };
 
-  for (const wave of waves(plan.tasks)) {
+  if (mode === "solo") {
+    const ctx: ConductorCtx = {
+      repo,
+      feature,
+      runId,
+      tasksMd,
+      plan,
+      refs,
+      retries,
+      noCommit: opts.noCommit === true,
+      ...(trailer ? { trailer } : {}),
+      rotateAfterTokens,
+      defaultHarness,
+      workerRole: config.roles.implementer ?? {},
+      ...(signal ? { signal } : {}),
+      inScope,
+      resumed,
+      outcome,
+      deviations,
+      driverFor,
+      call,
+      step,
+      blocker,
+      custom,
+      taskEvent,
+      agentLog,
+      log,
+    };
+    await runSolo(ctx);
+  }
+
+  for (const wave of mode === "solo" ? [] : waves(plan.tasks)) {
     if (signal?.aborted) break;
     const runnable: PlanTask[] = [];
     for (const t of wave) {

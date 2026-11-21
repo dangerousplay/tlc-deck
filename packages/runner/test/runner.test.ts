@@ -94,6 +94,7 @@ test("happy path: one commit per task, events fold to finished", async () => {
   );
   const driver = new FakeDriver({ implementer: [implOk], reviewer: [pass] }, "fake", writer);
   const res = await runPlan({
+    mode: "crew",
     repo,
     feature,
     env: { HOME: root },
@@ -130,6 +131,7 @@ test("reviewer reject -> advise -> fix -> pass", async () => {
     writer,
   );
   const res = await runPlan({
+    mode: "crew",
     repo,
     feature,
     only: ["T1"],
@@ -175,6 +177,7 @@ test("Blocked implementer -> advised retry", async () => {
     writer,
   );
   const res = await runPlan({
+    mode: "crew",
     repo,
     feature,
     only: ["T1"],
@@ -196,6 +199,7 @@ test("still Blocked after advice fails the task", async () => {
   const blocked = status({ status: "Blocked", issues: ["no db"] });
   const driver = new FakeDriver({ implementer: [blocked], advisor: [advice] }, "fake", writer);
   const res = await runPlan({
+    mode: "crew",
     repo,
     feature,
     only: ["T1"],
@@ -221,7 +225,13 @@ test("failure blocks dependents only; independents continue; error blocker", asy
     "fake",
     writer,
   );
-  const res = await runPlan({ repo, feature, env: { HOME: root }, driverFactory: () => driver });
+  const res = await runPlan({
+    mode: "crew",
+    repo,
+    feature,
+    env: { HOME: root },
+    driverFactory: () => driver,
+  });
   expect(res.code).toBe(1);
   expect(res.completed).toEqual(["T1", "T3"]);
   expect(res.failed).toEqual(["T2"]);
@@ -240,6 +250,7 @@ test("invalid driver output and non-zero exit give error blockers", async () => 
     writer,
   );
   const res = await runPlan({
+    mode: "crew",
     repo,
     feature,
     only: ["T1"],
@@ -249,6 +260,7 @@ test("invalid driver output and non-zero exit give error blockers", async () => 
   expect(res.failed).toEqual(["T1"]);
   const d2 = new FakeDriver({ implementer: [{ exitCode: 3 }] }, "fake", writer);
   const r2 = await runPlan({
+    mode: "crew",
     repo,
     feature,
     only: ["T1"],
@@ -266,6 +278,7 @@ test("retries exhausted fails the task", async () => {
     writer,
   );
   const res = await runPlan({
+    mode: "crew",
     repo,
     feature,
     only: ["T1"],
@@ -282,6 +295,7 @@ test("retries exhausted fails the task", async () => {
 test("--no-commit leaves the tree dirty", async () => {
   const driver = new FakeDriver({ implementer: [implOk], reviewer: [pass] }, "fake", writer);
   const res = await runPlan({
+    mode: "crew",
     repo,
     feature,
     only: ["T1"],
@@ -306,11 +320,18 @@ test("resume skips Done tasks of the newest run", async () => {
     "fake",
     writer,
   );
-  const r1 = await runPlan({ repo, feature, env: { HOME: root }, driverFactory: () => first });
+  const r1 = await runPlan({
+    mode: "crew",
+    repo,
+    feature,
+    env: { HOME: root },
+    driverFactory: () => first,
+  });
   expect(r1.failed).toEqual(["T2"]);
 
   const second = new FakeDriver({ implementer: [implOk], reviewer: [pass] }, "fake", writer);
   const r2 = await runPlan({
+    mode: "crew",
     repo,
     feature,
     resume: true,
@@ -328,7 +349,13 @@ test("tasks.md Status: Done is honoured", async () => {
   const file = join(repo, ".specs", "features", feature, "tasks.md");
   writeFileSync(file, TASKS.replace("### T1: First\n", "### T1: First\n\n**Status**: Done\n"));
   const driver = new FakeDriver({ implementer: [implOk], reviewer: [pass] }, "fake", writer);
-  const res = await runPlan({ repo, feature, env: { HOME: root }, driverFactory: () => driver });
+  const res = await runPlan({
+    mode: "crew",
+    repo,
+    feature,
+    env: { HOME: root },
+    driverFactory: () => driver,
+  });
   expect(driver.calls.filter((c) => c.role === "implementer").map(taskOf)).not.toContain("T1");
   expect(res.completed).toContain("T1");
 });
@@ -349,6 +376,7 @@ test("[P] tasks respect the concurrency cap", async () => {
     },
   );
   await runPlan({
+    mode: "crew",
     repo,
     feature,
     concurrency: 2,
@@ -365,6 +393,7 @@ test("SIGINT emits RUN_ERROR interrupted and stops", async () => {
     if (taskOf(req) === "T1") ac.abort();
   });
   const res = await runPlan({
+    mode: "crew",
     repo,
     feature,
     env: { HOME: root },
@@ -398,6 +427,7 @@ test("agent logs: tlc.agent start/end events and per-agent ndjson written throug
     writer,
   );
   const res = await runPlan({
+    mode: "crew",
     repo,
     feature,
     only: ["T1"],

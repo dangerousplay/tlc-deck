@@ -1,6 +1,15 @@
 import { readFileSync } from "node:fs";
 
-export type PromptName = "implement" | "fix" | "review" | "advise";
+export type PromptName =
+  | "implement"
+  | "fix"
+  | "review"
+  | "advise"
+  | "solo-first"
+  | "solo-task"
+  | "solo-fix"
+  | "solo-handoff"
+  | "solo-review";
 
 const cache = new Map<string, string>();
 

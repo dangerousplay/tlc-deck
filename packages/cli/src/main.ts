@@ -51,7 +51,7 @@ const usage = `usage: tlc <command> [options]
   daemon start|stop|status|ensure|restart [--quiet]
   install   claude-code [--hooks] [--workflow] [--panel] [--otel] [--systemd] [--no-daemon] [--dry-run]
   uninstall claude-code [--hooks] [--workflow] [--panel] [--otel] [--dry-run]
-  run    [--feature f] [--harness h] [--only T1,T2] [--retries n] [--no-commit] [--resume] [--concurrency n] [--no-daemon]
+  run    [--feature f] [--harness h] [--only T1,T2] [--retries n] [--no-commit] [--resume] [--concurrency n] [--mode solo|crew] [--no-daemon]
   --version`;
 
 const OPTIONS = {
@@ -67,6 +67,7 @@ const OPTIONS = {
   only: { type: "string" },
   retries: { type: "string" },
   concurrency: { type: "string" },
+  mode: { type: "string" },
   "no-commit": { type: "boolean" },
   "no-content": { type: "boolean" },
   hooks: { type: "boolean" },
@@ -395,6 +396,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
         }
         return n;
       };
+      if (values.mode !== undefined && values.mode !== "solo" && values.mode !== "crew") {
+        throw new CliError(`invalid --mode: ${values.mode} (solo|crew)`, 2);
+      }
       const { runRun } = await import("./commands/run.js");
       return await runRun({
         repo,
@@ -406,6 +410,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
           .filter(Boolean),
         retries: num("retries"),
         concurrency: num("concurrency"),
+        mode: values.mode as "solo" | "crew" | undefined,
         noCommit: values["no-commit"] === true,
         resume: values.resume === true,
         env: io.env,

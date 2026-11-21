@@ -14,7 +14,7 @@ export type BlockerKind = (typeof BLOCKER_KINDS)[number];
 export const RUN_STATUSES = ["running", "finished", "failed", "interrupted", "stale"] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
 
-export const STAGES = ["implement", "verify", "advise", "fix", "commit"] as const;
+export const STAGES = ["implement", "verify", "advise", "fix", "gate", "commit"] as const;
 export type Stage = (typeof STAGES)[number];
 
 export interface TaskState {

@@ -116,6 +116,8 @@ export const AgentInfoSchema = z.object({
   workflowId: z.string().optional(),
   runId: z.string().optional(),
   task: z.string().optional(),
+  /** Solo worker: every task the session has handled (`task` = current). */
+  tasks: z.array(z.string()).optional(),
   stage: z.string().optional(),
   role: z.string().optional(),
   label: z.string().optional(),

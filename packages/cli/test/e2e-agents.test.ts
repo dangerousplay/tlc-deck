@@ -179,7 +179,7 @@ test("tlc run with a streaming fake driver exposes agent logs through the API", 
     },
   );
   let out = "";
-  const code = await run(["run", "--no-commit"], {
+  const code = await run(["run", "--mode", "crew", "--no-commit"], {
     cwd: repo,
     env,
     stdout: (t) => {
