@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Driver, DriverRequest, DriverResult } from "../driver.js";
+import type { Driver, DriverRequest, DriverResult, ResumeCapability } from "../driver.js";
 import {
   agyParser,
   claudeParser,
@@ -37,6 +37,8 @@ export interface BuildContext {
 
 export interface HarnessSpec {
   name: string;
+  /** DD-02: whether `resumeSessionId` is honoured. */
+  resume: ResumeCapability;
   /** Needs a schema file on disk (codex) and an output file. */
   buildArgs(req: DriverRequest, opts: DriverOptions, ctx: BuildContext): string[];
   /** Fresh incremental parser of the harness's streaming output (DD-10). */
@@ -69,9 +71,11 @@ function finish(harness: string, r: StreamResult, requireEnd: boolean): DriverRe
 
 export const claudeSpec: HarnessSpec = {
   name: "claude",
+  resume: "id",
   buildArgs: (req, opts) => [
     "-p",
     req.prompt,
+    ...(req.resumeSessionId ? ["-r", req.resumeSessionId] : []),
     "--output-format",
     "stream-json",
     "--verbose",
@@ -91,9 +95,11 @@ export const claudeSpec: HarnessSpec = {
 
 export const agySpec: HarnessSpec = {
   name: "agy",
+  resume: "id",
   buildArgs: (req, opts) => [
     "-p",
     req.prompt,
+    ...(req.resumeSessionId ? ["--conversation", req.resumeSessionId] : []),
     "--output-format",
     "stream-json",
     "--json-schema",
@@ -109,9 +115,11 @@ export const agySpec: HarnessSpec = {
 
 export const codexSpec: HarnessSpec = {
   name: "codex",
+  resume: "id",
   needsFiles: true,
   buildArgs: (req, opts, ctx) => [
     "exec",
+    ...(req.resumeSessionId ? ["resume", req.resumeSessionId] : []),
     "--json",
     "--output-schema",
     ctx.schemaFile ?? "",
@@ -140,6 +148,7 @@ export const codexSpec: HarnessSpec = {
 
 export const geminiSpec: HarnessSpec = {
   name: "gemini",
+  resume: "none",
   buildArgs: (req, opts) => [
     "-p",
     req.prompt,
@@ -156,10 +165,12 @@ export const geminiSpec: HarnessSpec = {
 
 export const opencodeSpec: HarnessSpec = {
   name: "opencode",
+  resume: "id",
   buildArgs: (req, opts) => [
     "run",
     "--format",
     "json",
+    ...(req.resumeSessionId ? ["-s", req.resumeSessionId] : []),
     ...(req.model ? ["-m", req.model] : []),
     ...(opts.extraArgs ?? []),
     req.prompt,
@@ -181,11 +192,13 @@ export const SPECS: Record<string, HarnessSpec> = {
 
 export class CliDriver implements Driver {
   readonly name: string;
+  readonly resume: ResumeCapability;
   constructor(
     private readonly spec: HarnessSpec,
     private readonly opts: DriverOptions = {},
   ) {
     this.name = spec.name;
+    this.resume = spec.resume;
   }
 
   available(): boolean {

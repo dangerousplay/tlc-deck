@@ -19,6 +19,8 @@ export interface DriverRequest {
   cwd: string;
   /** JSON Schema of the expected structured output. */
   schema: unknown;
+  /** Continue this harness session instead of starting a new one (solo conductor). */
+  resumeSessionId?: string;
   signal?: AbortSignal;
   /** Receives normalised agent items as the harness streams them. */
   onItem?: (item: StreamItem) => void;
@@ -33,8 +35,12 @@ export interface DriverResult {
   exitCode: number;
 }
 
+export type ResumeCapability = "id" | "none";
+
 export interface Driver {
   readonly name: string;
+  /** Whether a session can be continued by id; absent means "none". */
+  readonly resume?: ResumeCapability;
   run(req: DriverRequest): Promise<DriverResult>;
 }
 
@@ -56,6 +62,7 @@ export type FakeResponse = DriverResult | Error | ((req: DriverRequest) => Drive
  */
 export class FakeDriver implements Driver {
   readonly calls: DriverRequest[] = [];
+  resume: ResumeCapability = "id";
   private readonly counters = new Map<string, number>();
 
   constructor(

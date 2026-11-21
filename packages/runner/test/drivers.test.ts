@@ -52,6 +52,56 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 
+describe("resume", () => {
+  const ctx = { schemaFile: "/s.json", outFile: "/o.txt" };
+  const r = req({ resumeSessionId: "S1" });
+  test("argv with resumeSessionId", () => {
+    expect(claudeSpec.buildArgs(r, {}, ctx).slice(0, 4)).toEqual(["-p", "do T1", "-r", "S1"]);
+    expect(codexSpec.buildArgs(r, {}, ctx).slice(0, 4)).toEqual(["exec", "resume", "S1", "--json"]);
+    expect(agySpec.buildArgs(r, {}, ctx).slice(0, 4)).toEqual([
+      "-p",
+      "do T1",
+      "--conversation",
+      "S1",
+    ]);
+    expect(opencodeSpec.buildArgs(r, {}, ctx)).toEqual([
+      "run",
+      "--format",
+      "json",
+      "-s",
+      "S1",
+      "-m",
+      "m1",
+      "do T1",
+    ]);
+  });
+  test("argv without resumeSessionId has no resume flags", () => {
+    for (const spec of [claudeSpec, codexSpec, agySpec, opencodeSpec]) {
+      const a = spec.buildArgs(req(), {}, ctx);
+      for (const f of ["-r", "resume", "--conversation", "-s"]) expect(a).not.toContain(f);
+    }
+  });
+  test("gemini reports resume none and ignores the id", () => {
+    expect(geminiSpec.resume).toBe("none");
+    expect(geminiSpec.buildArgs(r, {}, ctx)).toEqual(geminiSpec.buildArgs(req(), {}, ctx));
+    for (const s of [claudeSpec, codexSpec, agySpec, opencodeSpec]) expect(s.resume).toBe("id");
+  });
+  test("fake executables reuse the session and report per-turn input", async () => {
+    const e = { ...env(), FAKE_STATE_DIR: join(tmp, "state") };
+    for (const h of ["claude", "codex", "agy", "opencode"]) {
+      const d = createDriverFactory({ [h]: { env: e } })(h);
+      const a = await d.run(req());
+      const b = await d.run(req({ resumeSessionId: a.sessionId as string }));
+      expect(b.sessionId).toBe(a.sessionId);
+      expect(b.usage?.input).toBe(2 * (a.usage?.input ?? 0));
+    }
+    const g = createDriverFactory({ gemini: { env: e } })("gemini");
+    const g1 = await g.run(req());
+    const g2 = await g.run(req({ resumeSessionId: g1.sessionId as string }));
+    expect(g2.sessionId).not.toBe(g1.sessionId);
+  });
+});
+
 describe("argv golden", () => {
   const ctx = { schemaFile: "/s.json", outFile: "/o.txt" };
   test("claude", () => {
